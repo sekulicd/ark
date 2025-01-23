@@ -1,8 +1,8 @@
 receivers:
   # Host metrics (CPU, memory)
   hostmetrics:
-    root_path: /hostfs
     collection_interval: 10s
+    root_path: /hostfs
     scrapers:
       cpu:
       memory:

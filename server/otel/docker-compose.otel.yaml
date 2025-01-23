@@ -48,3 +48,8 @@ services:
     restart: unless-stopped
     depends_on:
       - prometheus
+
+networks:
+  default:
+    external: true
+    name: ${DOCKER_NETWORK:-deploy-network}  # Uses 'deploy-network' if DOCKER_NETWORK is not set
