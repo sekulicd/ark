@@ -9,8 +9,8 @@ receivers:
       filesystem:
       load:
       network:
-      process:
-      processes:
+      #process:
+      #processes:
       paging:
 
   # Receive metrics & traces from your ark server
