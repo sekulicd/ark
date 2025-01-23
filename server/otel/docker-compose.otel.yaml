@@ -13,15 +13,14 @@ services:
       - /proc:/hostfs/proc:ro
       - /sys:/hostfs/sys:ro
       - /:/hostfs:ro
-    command: ["--config=/etc/otelcol/config.yaml"]
     ports:
       - "4317:4317"  # gRPC OTLP
       - "4318:4318"  # HTTP OTLP
       - "8889:8889"  # Prometheus metrics endpoint
     restart: unless-stopped
-    privileged: true
-    security_opt:
-      - apparmor:unconfined
+    #privileged: true
+      #security_opt:
+    #- apparmor:unconfined
 
   ########################
   # Prometheus
@@ -48,8 +47,3 @@ services:
     restart: unless-stopped
     depends_on:
       - prometheus
-
-networks:
-  default:
-    external: true
-    name: ${DOCKER_NETWORK:-deploy-network}  # Uses 'deploy-network' if DOCKER_NETWORK is not set
