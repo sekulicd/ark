@@ -5,8 +5,11 @@ receivers:
     root_path: /hostfs
     scrapers:
       cpu:
-        system.cpu.utilization:
-          enabled: true
+        metrics:
+          system.cpu.time:
+            enabled: true
+          system.cpu.utilization:
+            enabled: true
       memory:
       disk:
       filesystem:
