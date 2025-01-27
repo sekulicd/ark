@@ -5,19 +5,13 @@ receivers:
     root_path: /hostfs
     scrapers:
       cpu:
-        metrics:
-          system.cpu.time:
-            enabled: true
-          system.cpu.utilization:
-            enabled: true
       memory:
       disk:
       filesystem:
       load:
       network:
-      #process:
-      #processes:
-      paging:
+      process:
+      processes:
 
   # Receive metrics & traces from your ark server
   otlp:
