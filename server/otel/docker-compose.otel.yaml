@@ -9,7 +9,7 @@ services:
   # OpenTelemetry Collector
   ########################
   otel-collector:
-    image: otel/opentelemetry-collector:latest
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:latest
     container_name: otel-collector
     networks:
       - otel
