@@ -10,8 +10,6 @@ receivers:
       filesystem:
       load:
       network:
-      process:
-      processes:
 
   # Receive metrics & traces from your ark server
   otlp:
