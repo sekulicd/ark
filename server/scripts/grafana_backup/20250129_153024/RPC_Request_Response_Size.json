@@ -1,0 +1,383 @@
+{
+  "dashboard": {
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "links": [],
+    "panels": [
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "cebchz61qvj0gd"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 2,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.4.0",
+        "targets": [
+          {
+            "editorMode": "code",
+            "expr": "sum by (rpc_method)(\n  rate(\n    rpc_server_request_size_bytes_sum{\n      exported_job=\"arkd\",\n      rpc_system=\"grpc\"\n    }[5m]\n  )\n)\n/\nsum by (rpc_method)(\n  rate(\n    rpc_server_request_size_bytes_count{\n      exported_job=\"arkd\",\n      rpc_system=\"grpc\"\n    }[5m]\n  )\n)\n",
+            "legendFormat": "{{rpc_method}} req",
+            "range": true,
+            "refId": "request size"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "cebchz61qvj0gd"
+            },
+            "editorMode": "code",
+            "expr": "sum by (rpc_method)(\n  rate(\n    rpc_server_response_size_bytes_sum{\n      exported_job=\"arkd\",\n      rpc_system=\"grpc\"\n    }[5m]\n  )\n)\n/\nsum by (rpc_method)(\n  rate(\n    rpc_server_response_size_bytes_count{\n      exported_job=\"arkd\",\n      rpc_system=\"grpc\"\n    }[5m]\n  )\n)\n",
+            "hide": false,
+            "instant": false,
+            "legendFormat": "{{rpc_method}} resp",
+            "range": true,
+            "refId": "response size"
+          }
+        ],
+        "title": "Average Request/Response Size (Bytes)",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "cebchz61qvj0gd"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 9,
+          "w": 24,
+          "x": 0,
+          "y": 10
+        },
+        "id": 1,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.4.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "cebchz61qvj0gd"
+            },
+            "editorMode": "code",
+            "expr": "histogram_quantile(\n  0.50,\n  sum by (le, rpc_method) (\n    rate(\n      rpc_server_request_size_bytes_bucket{\n        exported_job=\"arkd\",\n        rpc_system=\"grpc\"\n      }[5m]\n    )\n  )\n)\n",
+            "legendFormat": "{{rpc_method}} req",
+            "range": true,
+            "refId": "p50"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "cebchz61qvj0gd"
+            },
+            "editorMode": "code",
+            "expr": "histogram_quantile(\n  0.50,\n  sum by (le, rpc_method) (\n    rate(\n      rpc_server_response_size_bytes_bucket{\n        exported_job=\"arkd\",\n        rpc_system=\"grpc\"\n      }[5m]\n    )\n  )\n)\n",
+            "hide": false,
+            "instant": false,
+            "legendFormat": "{{rpc_method}} resp",
+            "range": true,
+            "refId": "A"
+          }
+        ],
+        "title": "Request/Response Size p50",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "cebchz61qvj0gd"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "__systemRef": "hideSeriesFrom",
+              "matcher": {
+                "id": "byNames",
+                "options": {
+                  "mode": "exclude",
+                  "names": [
+                    "RegisterInputsForNextRound req"
+                  ],
+                  "prefix": "All except:",
+                  "readOnly": true
+                }
+              },
+              "properties": [
+                {
+                  "id": "custom.hideFrom",
+                  "value": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": true
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 19
+        },
+        "id": 3,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.4.0",
+        "targets": [
+          {
+            "editorMode": "code",
+            "expr": "histogram_quantile(\n  0.90,\n  sum by (le, rpc_method) (\n    rate(\n      rpc_server_request_size_bytes_bucket{\n        exported_job=\"arkd\",\n        rpc_system=\"grpc\"\n      }[5m]\n    )\n  )\n)\n",
+            "legendFormat": "{{rpc_method}} req",
+            "range": true,
+            "refId": "p90 req"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "cebchz61qvj0gd"
+            },
+            "editorMode": "code",
+            "expr": "histogram_quantile(\n  0.90,\n  sum by (le, rpc_method) (\n    rate(\n      rpc_server_response_size_bytes_bucket{\n        exported_job=\"arkd\",\n        rpc_system=\"grpc\"\n      }[5m]\n    )\n  )\n)\n",
+            "hide": false,
+            "instant": false,
+            "legendFormat": "{{rpc_method}} resp",
+            "range": true,
+            "refId": "p90 resp"
+          }
+        ],
+        "title": "Request/Response size p90",
+        "type": "timeseries"
+      }
+    ],
+    "preload": false,
+    "schemaVersion": 40,
+    "tags": [],
+    "templating": {
+      "list": []
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "RPC Request/Response Size",
+    "version": 14,
+    "weekStart": ""
+  },
+  "folderId": 0,
+  "overwrite": true
+}

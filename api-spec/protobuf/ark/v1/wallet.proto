@@ -105,3 +105,4 @@ message GetBalanceResponse {
   Balance main_account = 1;
   Balance connectors_account = 2;
 }
+
