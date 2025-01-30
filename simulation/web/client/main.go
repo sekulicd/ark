@@ -241,7 +241,7 @@ func (c *Client) sendAsyncHandler(w http.ResponseWriter, r *http.Request) {
 		arksdk.NewBitcoinReceiver(req.ToAddress, uint64(req.Amount*1e8)),
 	}
 
-	_, err := c.ArkClient.SendOffChain(ctx, false, receivers)
+	_, err := c.ArkClient.SendOffChain(ctx, false, receivers, false)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

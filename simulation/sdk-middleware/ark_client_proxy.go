@@ -144,12 +144,12 @@ func (p *ArkClientProxy) SendOnChain(ctx context.Context, receivers []arksdk.Rec
 
 }
 
-func (p *ArkClientProxy) SendOffChain(ctx context.Context, withExpiryCoinselect bool, receivers []arksdk.Receiver) (string, error) {
+func (p *ArkClientProxy) SendOffChain(ctx context.Context, withExpiryCoinselect bool, receivers []arksdk.Receiver, withZeroFees bool) (string, error) {
 
-	middlewareArgs := []interface{}{ctx, withExpiryCoinselect, receivers}
+	middlewareArgs := []interface{}{ctx, withExpiryCoinselect, receivers, withZeroFees}
 	ctx = p.chain.Before(ctx, "SendOffChain", middlewareArgs)
 
-	ret0, ret1 := p.client.SendOffChain(ctx, withExpiryCoinselect, receivers)
+	ret0, ret1 := p.client.SendOffChain(ctx, withExpiryCoinselect, receivers, withZeroFees)
 	results := []interface{}{ret0, ret1}
 
 	p.chain.After(ctx, "SendOffChain", results, ret1)
@@ -172,12 +172,12 @@ func (p *ArkClientProxy) UnilateralRedeem(ctx context.Context) error {
 
 }
 
-func (p *ArkClientProxy) CollaborativeRedeem(ctx context.Context, addr string, amount uint64, withExpiryCoinselect bool) (string, error) {
+func (p *ArkClientProxy) CollaborativeRedeem(ctx context.Context, addr string, amount uint64, withExpiryCoinselect bool, opts ...arksdk.Option) (string, error) {
 
-	middlewareArgs := []interface{}{ctx, addr, amount, withExpiryCoinselect}
+	middlewareArgs := []interface{}{ctx, addr, amount, withExpiryCoinselect, opts}
 	ctx = p.chain.Before(ctx, "CollaborativeRedeem", middlewareArgs)
 
-	ret0, ret1 := p.client.CollaborativeRedeem(ctx, addr, amount, withExpiryCoinselect)
+	ret0, ret1 := p.client.CollaborativeRedeem(ctx, addr, amount, withExpiryCoinselect, opts...)
 	results := []interface{}{ret0, ret1}
 
 	p.chain.After(ctx, "CollaborativeRedeem", results, ret1)
@@ -186,12 +186,12 @@ func (p *ArkClientProxy) CollaborativeRedeem(ctx context.Context, addr string, a
 
 }
 
-func (p *ArkClientProxy) Settle(ctx context.Context) (string, error) {
+func (p *ArkClientProxy) Settle(ctx context.Context, opts ...arksdk.Option) (string, error) {
 
-	middlewareArgs := []interface{}{ctx}
+	middlewareArgs := []interface{}{ctx, opts}
 	ctx = p.chain.Before(ctx, "Settle", middlewareArgs)
 
-	ret0, ret1 := p.client.Settle(ctx)
+	ret0, ret1 := p.client.Settle(ctx, opts...)
 	results := []interface{}{ret0, ret1}
 
 	p.chain.After(ctx, "Settle", results, ret1)
@@ -259,12 +259,12 @@ func (p *ArkClientProxy) GetTransactionEventChannel() chan types.TransactionEven
 
 }
 
-func (p *ArkClientProxy) RedeemNotes(ctx context.Context, notes []string) (string, error) {
+func (p *ArkClientProxy) RedeemNotes(ctx context.Context, notes []string, opts ...arksdk.Option) (string, error) {
 
-	middlewareArgs := []interface{}{ctx, notes}
+	middlewareArgs := []interface{}{ctx, notes, opts}
 	ctx = p.chain.Before(ctx, "RedeemNotes", middlewareArgs)
 
-	ret0, ret1 := p.client.RedeemNotes(ctx, notes)
+	ret0, ret1 := p.client.RedeemNotes(ctx, notes, opts...)
 	results := []interface{}{ret0, ret1}
 
 	p.chain.After(ctx, "RedeemNotes", results, ret1)
@@ -284,6 +284,20 @@ func (p *ArkClientProxy) SetNostrNotificationRecipient(ctx context.Context, nost
 	p.chain.After(ctx, "SetNostrNotificationRecipient", results, ret0)
 
 	return ret0
+
+}
+
+func (p *ArkClientProxy) SignTransaction(ctx context.Context, tx string) (string, error) {
+
+	middlewareArgs := []interface{}{ctx, tx}
+	ctx = p.chain.Before(ctx, "SignTransaction", middlewareArgs)
+
+	ret0, ret1 := p.client.SignTransaction(ctx, tx)
+	results := []interface{}{ret0, ret1}
+
+	p.chain.After(ctx, "SignTransaction", results, ret1)
+
+	return ret0, ret1
 
 }
 
