@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/ark-network/ark/common/note"
+	"github.com/ark-network/ark/common/tree"
 	"github.com/ark-network/ark/server/internal/core/domain"
 	"github.com/ark-network/ark/server/internal/core/ports"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -19,7 +20,7 @@ type Service interface {
 	Stop()
 	SpendNotes(ctx context.Context, notes []note.Note) (string, error)
 	SpendVtxos(ctx context.Context, inputs []ports.Input) (string, error)
-	ClaimVtxos(ctx context.Context, creds string, receivers []domain.Receiver) error
+	ClaimVtxos(ctx context.Context, creds string, receivers []domain.Receiver, musig2Data *tree.Musig2) error
 	SignVtxos(ctx context.Context, forfeitTxs []string) error
 	SignRoundTx(ctx context.Context, roundTx string) error
 	GetRoundByTxid(ctx context.Context, roundTxid string) (*domain.Round, error)
@@ -31,12 +32,11 @@ type Service interface {
 		ctx context.Context, address string,
 	) (spendableVtxos, spentVtxos []domain.Vtxo, err error)
 	GetInfo(ctx context.Context) (*ServiceInfo, error)
-	SubmitRedeemTx(ctx context.Context, redeemTx string) (string, error)
+	SubmitRedeemTx(ctx context.Context, redeemTx string) (signedRedeemTx, redeemTxid string, err error)
 	GetBoardingAddress(
 		ctx context.Context, userPubkey *secp256k1.PublicKey,
 	) (address string, scripts []string, err error)
 	// Tree signing methods
-	RegisterCosignerPubkey(ctx context.Context, requestID string, ephemeralPubkey string) error
 	RegisterCosignerNonces(
 		ctx context.Context, roundID string,
 		pubkey *secp256k1.PublicKey, nonces string,
@@ -54,7 +54,7 @@ type Service interface {
 
 type ServiceInfo struct {
 	PubKey              string
-	RoundLifetime       int64
+	VtxoTreeExpiry      int64
 	UnilateralExitDelay int64
 	RoundInterval       int64
 	Network             string

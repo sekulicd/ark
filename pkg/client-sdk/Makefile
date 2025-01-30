@@ -1,14 +1,15 @@
 .PHONY: genrest test vet lint prepare-wasm-test
 
-REST_DIR = $(PWD)/client/rest/service
+client_dir = $(or $(REST_DIR),$(PWD)/client/rest/service)
 
 ## genrest: compiles rest client from stub with https://github.com/go-swagger/go-swagger
 genrest:
 	@echo "Cleaning existing files..."
-	@rm -rf $(REST_DIR)
+	@rm -rf $(client_dir)
 	@echo "Generating rest client from stub..."
-	@mkdir -p $(REST_DIR)
-	@swagger generate client -f ../../api-spec/openapi/swagger/ark/v1/service.swagger.json -t $(REST_DIR) --client-package=arkservice
+	@mkdir -p $(client_dir)
+	@swagger generate client -f ../../api-spec/openapi/swagger/ark/v1/service.swagger.json -t $(client_dir) --client-package=arkservice
+	@swagger generate client -f ../../api-spec/openapi/swagger/ark/v1/explorer.swagger.json -t $(client_dir) --client-package=explorerservice
 
 ## test: runs unit tests
 test:
@@ -36,7 +37,7 @@ GO_VERSION := $(shell go version | cut -d' ' -f3)
 build-wasm:
 	@mkdir -p $(BUILD_DIR)
 	@echo "Version: $(VERSION)"
-	@GOOS=js GOARCH=wasm GO111MODULE=on go build -ldflags="-s -w -X 'main.Version=$(VERSION)'" -o $(BUILD_DIR)/ark-sdk.wasm $(WASM_DIR)/main.go
+	@GOOS=js GOARCH=wasm GO111MODULE=on go build -ldflags="-s -w -X 'main.Version=$(VERSION)'" -o $(BUILD_DIR)/ark-sdk.wasm $(WASM_DIR)/*.go
 
 test-wasm:
 	$(MAKE) build-wasm BUILD_DIR=./test/wasm/web

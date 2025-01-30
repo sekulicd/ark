@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -21,9 +22,9 @@ type Config struct {
 	WalletType                 string
 	ClientType                 string
 	Network                    common.Network
-	RoundLifetime              common.Locktime
+	VtxoTreeExpiry             common.RelativeLocktime
 	RoundInterval              int64
-	UnilateralExitDelay        common.Locktime
+	UnilateralExitDelay        common.RelativeLocktime
 	Dust                       uint64
 	BoardingDescriptorTemplate string
 	ExplorerURL                string
@@ -76,6 +77,7 @@ type Transaction struct {
 	Type      TxType
 	Settled   bool
 	CreatedAt time.Time
+	SpentBy   string
 }
 
 func (t Transaction) IsRound() bool {
@@ -88,6 +90,11 @@ func (t Transaction) IsBoarding() bool {
 
 func (t Transaction) IsOOR() bool {
 	return t.RedeemTxid != ""
+}
+
+func (t Transaction) String() string {
+	buf, _ := json.MarshalIndent(t, "", "  ")
+	return string(buf)
 }
 
 const (
@@ -110,7 +117,7 @@ type Utxo struct {
 	VOut        uint32
 	Amount      uint64
 	Asset       string // liquid only
-	Delay       common.Locktime
+	Delay       common.RelativeLocktime
 	SpendableAt time.Time
 	CreatedAt   time.Time
 	Tapscripts  []string

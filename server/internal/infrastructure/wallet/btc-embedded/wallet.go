@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ark-network/ark/common"
+	"github.com/ark-network/ark/common/bitcointree"
 	"github.com/ark-network/ark/common/tree"
 	"github.com/ark-network/ark/server/internal/core/domain"
 	"github.com/ark-network/ark/server/internal/core/ports"
@@ -48,17 +49,19 @@ type WalletConfig struct {
 }
 
 func (c WalletConfig) chainParams() *chaincfg.Params {
-	mutinyNetSigNetParams := chaincfg.CustomSignetParams(common.MutinyNetChallenge, nil)
-	mutinyNetSigNetParams.TargetTimePerBlock = common.MutinyNetBlockTime
 	switch c.Network.Name {
 	case common.Bitcoin.Name:
 		return &chaincfg.MainNetParams
+	//case common.BitcoinTestNet4.Name: //TODO uncomment once supported
+	//	return &chaincfg.TestNet4Params
 	case common.BitcoinTestNet.Name:
 		return &chaincfg.TestNet3Params
+	case common.BitcoinSigNet.Name:
+		return &chaincfg.SigNetParams
+	case common.BitcoinMutinyNet.Name:
+		return &common.MutinyNetSigNetParams
 	case common.BitcoinRegTest.Name:
 		return &chaincfg.RegressionNetParams
-	case common.BitcoinSigNet.Name:
-		return &mutinyNetSigNetParams
 	default:
 		return &chaincfg.MainNetParams
 	}
@@ -114,6 +117,10 @@ type service struct {
 
 	// holds the data related to the server key used in Vtxo scripts
 	serverKeyAddr waddrmgr.ManagedPubKeyAddress
+
+	// cached forfeit address
+	forfeitAddrLock sync.RWMutex
+	forfeitAddr     string
 
 	isSynced bool
 	syncedCh chan struct{}
@@ -564,43 +571,63 @@ func (s *service) GetForfeitAddress(ctx context.Context) (string, error) {
 		return "", err
 	}
 
+	s.forfeitAddrLock.RLock()
+	if s.forfeitAddr != "" {
+		addr := s.forfeitAddr
+		s.forfeitAddrLock.RUnlock()
+		return addr, nil
+	}
+	s.forfeitAddrLock.RUnlock()
+
 	addrs, err := s.wallet.ListAddresses(string(mainAccount), false)
 	if err != nil {
 		return "", err
 	}
 
+	var forfeitAddr string
 	if len(addrs) == 0 {
 		addr, err := s.deriveNextAddress()
 		if err != nil {
 			return "", err
 		}
-
-		return addr.EncodeAddress(), nil
-	}
-
-	for info, addrs := range addrs {
-		if info.KeyScope != p2wpkhKeyScope {
-			continue
-		}
-
-		if info.AccountName != string(mainAccount) {
-			continue
-		}
-
-		for _, addr := range addrs {
-			if addr.Internal {
+		forfeitAddr = addr.EncodeAddress()
+	} else {
+		for info, addrs := range addrs {
+			if info.KeyScope != p2wpkhKeyScope {
 				continue
 			}
 
-			splittedPath := strings.Split(addr.DerivationPath, "/")
-			last := splittedPath[len(splittedPath)-1]
-			if last == "0" {
-				return addr.Address, nil
+			if info.AccountName != string(mainAccount) {
+				continue
+			}
+
+			for _, addr := range addrs {
+				if addr.Internal {
+					continue
+				}
+
+				splittedPath := strings.Split(addr.DerivationPath, "/")
+				last := splittedPath[len(splittedPath)-1]
+				if last == "0" {
+					forfeitAddr = addr.Address
+					break
+				}
+			}
+			if forfeitAddr != "" {
+				break
 			}
 		}
 	}
 
-	return "", fmt.Errorf("forfeit address not found")
+	if forfeitAddr == "" {
+		return "", fmt.Errorf("forfeit address not found")
+	}
+
+	s.forfeitAddrLock.Lock()
+	s.forfeitAddr = forfeitAddr
+	s.forfeitAddrLock.Unlock()
+
+	return forfeitAddr, nil
 }
 
 func (s *service) ListConnectorUtxos(ctx context.Context, connectorAddress string) ([]ports.TxInput, error) {
@@ -750,13 +777,25 @@ func (s *service) SignTransaction(ctx context.Context, partialTx string, extract
 					return "", err
 				}
 
-				signatures := make(map[string][]byte)
-
-				for _, sig := range in.TaprootScriptSpendSig {
-					signatures[hex.EncodeToString(sig.XOnlyPubKey)] = sig.Signature
+				conditionWitness, err := bitcointree.GetConditionWitness(in)
+				if err != nil {
+					return "", err
 				}
 
-				witness, err := closure.Witness(in.TaprootLeafScript[0].ControlBlock, signatures)
+				args := make(map[string][]byte)
+				if len(conditionWitness) > 0 {
+					var conditionWitnessBytes bytes.Buffer
+					if err := psbt.WriteTxWitness(&conditionWitnessBytes, conditionWitness); err != nil {
+						return "", err
+					}
+					args[tree.ConditionWitnessKey] = conditionWitnessBytes.Bytes()
+				}
+
+				for _, sig := range in.TaprootScriptSpendSig {
+					args[hex.EncodeToString(sig.XOnlyPubKey)] = sig.Signature
+				}
+
+				witness, err := closure.Witness(in.TaprootLeafScript[0].ControlBlock, args)
 				if err != nil {
 					return "", err
 				}

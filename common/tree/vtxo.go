@@ -25,10 +25,10 @@ func ParseVtxoScript(scripts []string) (VtxoScript, error) {
 	return v, err
 }
 
-func NewDefaultVtxoScript(owner, server *secp256k1.PublicKey, exitDelay common.Locktime) *TapscriptsVtxoScript {
+func NewDefaultVtxoScript(owner, server *secp256k1.PublicKey, exitDelay common.RelativeLocktime) *TapscriptsVtxoScript {
 	return &TapscriptsVtxoScript{
 		[]Closure{
-			&CSVSigClosure{
+			&CSVMultisigClosure{
 				MultisigClosure: MultisigClosure{PubKeys: []*secp256k1.PublicKey{owner}},
 				Locktime:        exitDelay,
 			},
@@ -72,7 +72,7 @@ func (v *TapscriptsVtxoScript) Decode(scripts []string) error {
 	return nil
 }
 
-func (v *TapscriptsVtxoScript) Validate(server *secp256k1.PublicKey, minLocktime common.Locktime) error {
+func (v *TapscriptsVtxoScript) Validate(server *secp256k1.PublicKey, minLocktime common.RelativeLocktime) error {
 	serverXonly := schnorr.SerializePubKey(server)
 	for _, forfeit := range v.ForfeitClosures() {
 		multisigClosure, ok := forfeit.(*MultisigClosure)
@@ -108,11 +108,11 @@ func (v *TapscriptsVtxoScript) Validate(server *secp256k1.PublicKey, minLocktime
 	return nil
 }
 
-func (v *TapscriptsVtxoScript) SmallestExitDelay() (*common.Locktime, error) {
-	var smallest *common.Locktime
+func (v *TapscriptsVtxoScript) SmallestExitDelay() (*common.RelativeLocktime, error) {
+	var smallest *common.RelativeLocktime
 
 	for _, closure := range v.Closures {
-		if csvClosure, ok := closure.(*CSVSigClosure); ok {
+		if csvClosure, ok := closure.(*CSVMultisigClosure); ok {
 			if smallest == nil || csvClosure.Locktime.LessThan(*smallest) {
 				smallest = &csvClosure.Locktime
 			}
@@ -130,7 +130,7 @@ func (v *TapscriptsVtxoScript) ForfeitClosures() []Closure {
 	forfeits := make([]Closure, 0)
 	for _, closure := range v.Closures {
 		switch closure.(type) {
-		case *MultisigClosure, *CLTVMultisigClosure:
+		case *MultisigClosure, *CLTVMultisigClosure, *ConditionMultisigClosure:
 			forfeits = append(forfeits, closure)
 		}
 	}
@@ -141,7 +141,7 @@ func (v *TapscriptsVtxoScript) ExitClosures() []Closure {
 	exits := make([]Closure, 0)
 	for _, closure := range v.Closures {
 		switch closure.(type) {
-		case *CSVSigClosure:
+		case *CSVMultisigClosure:
 			exits = append(exits, closure)
 		}
 	}
@@ -187,15 +187,9 @@ func (b elementsTapTree) GetTaprootMerkleProof(leafhash chainhash.Hash) (*common
 		return nil, err
 	}
 
-	closure, err := DecodeClosure(proof.Script)
-	if err != nil {
-		return nil, err
-	}
-
 	return &common.TaprootMerkleProof{
 		ControlBlock: controlBlockBytes,
 		Script:       proof.Script,
-		WitnessSize:  closure.WitnessSize(),
 	}, nil
 }
 

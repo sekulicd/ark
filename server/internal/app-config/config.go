@@ -44,13 +44,14 @@ var (
 		"file": {},
 	}
 	supportedNetworks = supportedType{
-		common.Bitcoin.Name:        {},
-		common.BitcoinTestNet.Name: {},
-		common.BitcoinRegTest.Name: {},
-		common.BitcoinSigNet.Name:  {},
-		common.Liquid.Name:         {},
-		common.LiquidTestNet.Name:  {},
-		common.LiquidRegTest.Name:  {},
+		common.Bitcoin.Name:          {},
+		common.BitcoinTestNet.Name:   {},
+		common.BitcoinSigNet.Name:    {},
+		common.BitcoinMutinyNet.Name: {},
+		common.BitcoinRegTest.Name:   {},
+		common.Liquid.Name:           {},
+		common.LiquidTestNet.Name:    {},
+		common.LiquidRegTest.Name:    {},
 	}
 )
 
@@ -58,22 +59,24 @@ type Config struct {
 	DbType                  string
 	EventDbType             string
 	DbDir                   string
-	DbMigrationPath         string
 	EventDbDir              string
 	RoundInterval           int64
 	Network                 common.Network
 	SchedulerType           string
 	TxBuilderType           string
 	WalletAddr              string
-	RoundLifetime           common.Locktime
-	UnilateralExitDelay     common.Locktime
-	BoardingExitDelay       common.Locktime
+	VtxoTreeExpiry          common.RelativeLocktime
+	UnilateralExitDelay     common.RelativeLocktime
+	BoardingExitDelay       common.RelativeLocktime
 	NostrDefaultRelays      []string
 	NoteUriPrefix           string
 	MarketHourStartTime     time.Time
 	MarketHourEndTime       time.Time
 	MarketHourPeriod        time.Duration
 	MarketHourRoundInterval time.Duration
+	OtelCollectorEndpoint   string
+
+	AllowZeroFees bool
 
 	EsploraURL       string
 	NeutrinoPeer     string
@@ -119,21 +122,21 @@ func (c *Config) Validate() error {
 	if !supportedNetworks.supports(c.Network.Name) {
 		return fmt.Errorf("invalid network, must be one of: %s", supportedNetworks)
 	}
-	if c.RoundLifetime.Type == common.LocktimeTypeBlock {
+	if c.VtxoTreeExpiry.Type == common.LocktimeTypeBlock {
 		if c.SchedulerType != "block" {
-			return fmt.Errorf("scheduler type must be block if round lifetime is expressed in blocks")
+			return fmt.Errorf("scheduler type must be block if vtxo tree expiry is expressed in blocks")
 		}
 	} else { // seconds
 		if c.SchedulerType != "gocron" {
-			return fmt.Errorf("scheduler type must be gocron if round lifetime is expressed in seconds")
+			return fmt.Errorf("scheduler type must be gocron if vtxo tree expiry is expressed in seconds")
 		}
 
-		// round life time must be a multiple of 512 if expressed in seconds
-		if c.RoundLifetime.Value%minAllowedSequence != 0 {
-			c.RoundLifetime.Value -= c.RoundLifetime.Value % minAllowedSequence
+		// vtxo tree expiry must be a multiple of 512 if expressed in seconds
+		if c.VtxoTreeExpiry.Value%minAllowedSequence != 0 {
+			c.VtxoTreeExpiry.Value -= c.VtxoTreeExpiry.Value % minAllowedSequence
 			log.Infof(
-				"round lifetime must be a multiple of %d, rounded to %d",
-				minAllowedSequence, c.RoundLifetime,
+				"vtxo tree expiry must be a multiple of %d, rounded to %d",
+				minAllowedSequence, c.VtxoTreeExpiry,
 			)
 		}
 	}
@@ -239,7 +242,7 @@ func (c *Config) repoManager() error {
 	case "badger":
 		dataStoreConfig = []interface{}{c.DbDir, logger}
 	case "sqlite":
-		dataStoreConfig = []interface{}{c.DbDir, c.DbMigrationPath}
+		dataStoreConfig = []interface{}{c.DbDir}
 	default:
 		return fmt.Errorf("unknown db type")
 	}
@@ -313,11 +316,11 @@ func (c *Config) txBuilderService() error {
 	switch c.TxBuilderType {
 	case "covenant":
 		svc = txbuilder.NewTxBuilder(
-			c.wallet, c.Network, c.RoundLifetime, c.BoardingExitDelay,
+			c.wallet, c.Network, c.VtxoTreeExpiry, c.BoardingExitDelay,
 		)
 	case "covenantless":
 		svc = cltxbuilder.NewTxBuilder(
-			c.wallet, c.Network, c.RoundLifetime, c.BoardingExitDelay,
+			c.wallet, c.Network, c.VtxoTreeExpiry, c.BoardingExitDelay,
 		)
 	default:
 		err = fmt.Errorf("unknown tx builder type")
@@ -357,7 +360,7 @@ func (c *Config) schedulerService() error {
 func (c *Config) appService() error {
 	if common.IsLiquid(c.Network) {
 		svc, err := application.NewCovenantService(
-			c.Network, c.RoundInterval, c.RoundLifetime, c.UnilateralExitDelay, c.BoardingExitDelay, c.NostrDefaultRelays,
+			c.Network, c.RoundInterval, c.VtxoTreeExpiry, c.UnilateralExitDelay, c.BoardingExitDelay, c.NostrDefaultRelays,
 			c.wallet, c.repo, c.txBuilder, c.scanner, c.scheduler, c.NoteUriPrefix,
 			c.MarketHourStartTime, c.MarketHourEndTime, c.MarketHourPeriod, c.MarketHourRoundInterval,
 		)
@@ -370,9 +373,10 @@ func (c *Config) appService() error {
 	}
 
 	svc, err := application.NewCovenantlessService(
-		c.Network, c.RoundInterval, c.RoundLifetime, c.UnilateralExitDelay, c.BoardingExitDelay, c.NostrDefaultRelays,
+		c.Network, c.RoundInterval, c.VtxoTreeExpiry, c.UnilateralExitDelay, c.BoardingExitDelay, c.NostrDefaultRelays,
 		c.wallet, c.repo, c.txBuilder, c.scanner, c.scheduler, c.NoteUriPrefix,
 		c.MarketHourStartTime, c.MarketHourEndTime, c.MarketHourPeriod, c.MarketHourRoundInterval,
+		c.AllowZeroFees,
 	)
 	if err != nil {
 		return err
@@ -384,7 +388,7 @@ func (c *Config) appService() error {
 
 func (c *Config) adminService() error {
 	unit := ports.UnixTime
-	if c.RoundLifetime.Value < minAllowedSequence {
+	if c.VtxoTreeExpiry.Value < minAllowedSequence {
 		unit = ports.BlockHeight
 	}
 

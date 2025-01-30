@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +33,56 @@ import (
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 )
+
+// Musig2SignOptions is only available for covenantless clients
+// it allows to customize the vtxo signing process
+type Musig2SignOptions struct {
+	ExtraSignerSessions  []bitcointree.SignerSession
+	SigningType          *tree.SigningType
+	WalletSignerDisabled bool
+}
+
+// WithoutWalletSigner disables the wallet signer
+func WithoutWalletSigner(o interface{}) error {
+	opts, ok := o.(*Musig2SignOptions)
+	if !ok {
+		return fmt.Errorf("invalid options type")
+	}
+
+	opts.WalletSignerDisabled = true
+	return nil
+}
+
+// WithSignAll sets the signing type to ALL instead of the default BRANCH
+func WithSignAll(o interface{}) error {
+	opts, ok := o.(*Musig2SignOptions)
+	if !ok {
+		return fmt.Errorf("invalid options type")
+	}
+
+	t := tree.SignAll
+	opts.SigningType = &t
+	return nil
+}
+
+// WithExtraSigner allows to use a set of custom signer for the vtxo tree signing process
+func WithExtraSigner(signerSessions ...bitcointree.SignerSession) Option {
+	return func(o interface{}) error {
+		opts, ok := o.(*Musig2SignOptions)
+		if !ok {
+			return fmt.Errorf("invalid options type")
+		}
+
+		if len(signerSessions) == 0 {
+			return fmt.Errorf("no signer sessions provided")
+		}
+
+		opts.ExtraSignerSessions = signerSessions
+		return nil
+	}
+}
 
 type bitcoinReceiver struct {
 	to     string
@@ -707,6 +757,7 @@ func (a *covenantlessArkClient) SendOnChain(
 func (a *covenantlessArkClient) SendOffChain(
 	ctx context.Context,
 	withExpiryCoinselect bool, receivers []Receiver,
+	withZeroFees bool,
 ) (string, error) {
 	if len(receivers) <= 0 {
 		return "", fmt.Errorf("missing receivers")
@@ -812,7 +863,7 @@ func (a *covenantlessArkClient) SendOffChain(
 	}
 
 	feeRate := chainfee.FeePerKwFloor
-	redeemTx, err := buildRedeemTx(inputs, receivers, feeRate.FeePerVByte())
+	redeemTx, err := buildRedeemTx(inputs, receivers, feeRate.FeePerVByte(), nil, withZeroFees)
 	if err != nil {
 		return "", err
 	}
@@ -822,16 +873,23 @@ func (a *covenantlessArkClient) SendOffChain(
 		return "", err
 	}
 
-	signedRedeemTx, err = a.client.SubmitRedeemTx(ctx, signedRedeemTx)
+	_, redeemTxid, err := a.client.SubmitRedeemTx(ctx, signedRedeemTx)
 	if err != nil {
 		return "", err
 	}
 
-	return signedRedeemTx, nil
+	return redeemTxid, nil
 }
 
-func (a *covenantlessArkClient) RedeemNotes(ctx context.Context, notes []string) (string, error) {
+func (a *covenantlessArkClient) RedeemNotes(ctx context.Context, notes []string, opts ...Option) (string, error) {
 	amount := uint64(0)
+
+	options := &Musig2SignOptions{}
+	for _, opt := range opts {
+		if err := opt(options); err != nil {
+			return "", err
+		}
+	}
 
 	for _, vStr := range notes {
 		v, err := note.NewFromString(vStr)
@@ -849,13 +907,13 @@ func (a *covenantlessArkClient) RedeemNotes(ctx context.Context, notes []string)
 		return "", fmt.Errorf("no funds detected")
 	}
 
-	roundEphemeralKey, err := secp256k1.GeneratePrivateKey()
+	signerSessions, signerPubKeys, signingType, err := a.handleOptions(options, nil, notes)
 	if err != nil {
 		return "", err
 	}
 
 	requestID, err := a.client.RegisterNotesForNextRound(
-		ctx, notes, hex.EncodeToString(roundEphemeralKey.PubKey().SerializeCompressed()),
+		ctx, notes,
 	)
 	if err != nil {
 		return "", err
@@ -870,6 +928,10 @@ func (a *covenantlessArkClient) RedeemNotes(ctx context.Context, notes []string)
 
 	if err := a.client.RegisterOutputsForNextRound(
 		ctx, requestID, receiversOutput,
+		&tree.Musig2{
+			CosignersPublicKeys: signerPubKeys,
+			SigningType:         tree.SigningType(signingType),
+		},
 	); err != nil {
 		return "", err
 	}
@@ -877,7 +939,7 @@ func (a *covenantlessArkClient) RedeemNotes(ctx context.Context, notes []string)
 	log.Infof("payout registered with id: %s", requestID)
 
 	roundTxID, err := a.handleRoundStream(
-		ctx, requestID, nil, nil, receiversOutput, roundEphemeralKey,
+		ctx, requestID, nil, nil, receiversOutput, signerSessions,
 	)
 	if err != nil {
 		return "", err
@@ -948,7 +1010,15 @@ func (a *covenantlessArkClient) UnilateralRedeem(ctx context.Context) error {
 func (a *covenantlessArkClient) CollaborativeRedeem(
 	ctx context.Context,
 	addr string, amount uint64, withExpiryCoinselect bool,
+	opts ...Option,
 ) (string, error) {
+	options := &Musig2SignOptions{}
+	for _, opt := range opts {
+		if err := opt(options); err != nil {
+			return "", err
+		}
+	}
+
 	if a.wallet.IsLocked() {
 		return "", fmt.Errorf("wallet is locked")
 	}
@@ -1037,7 +1107,7 @@ func (a *covenantlessArkClient) CollaborativeRedeem(
 		})
 	}
 
-	roundEphemeralKey, err := secp256k1.GeneratePrivateKey()
+	signerSessions, signerPubKeys, signingType, err := a.handleOptions(options, inputs, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1045,18 +1115,23 @@ func (a *covenantlessArkClient) CollaborativeRedeem(
 	requestID, err := a.client.RegisterInputsForNextRound(
 		ctx,
 		inputs,
-		hex.EncodeToString(roundEphemeralKey.PubKey().SerializeCompressed()),
 	)
 	if err != nil {
 		return "", err
 	}
 
-	if err := a.client.RegisterOutputsForNextRound(ctx, requestID, receivers); err != nil {
+	if err := a.client.RegisterOutputsForNextRound(
+		ctx, requestID, receivers,
+		&tree.Musig2{
+			CosignersPublicKeys: signerPubKeys,
+			SigningType:         tree.SigningType(signingType),
+		},
+	); err != nil {
 		return "", err
 	}
 
 	roundTxID, err := a.handleRoundStream(
-		ctx, requestID, selectedCoins, selectedBoardingCoins, receivers, roundEphemeralKey,
+		ctx, requestID, selectedCoins, selectedBoardingCoins, receivers, signerSessions,
 	)
 	if err != nil {
 		return "", err
@@ -1065,8 +1140,8 @@ func (a *covenantlessArkClient) CollaborativeRedeem(
 	return roundTxID, nil
 }
 
-func (a *covenantlessArkClient) Settle(ctx context.Context) (string, error) {
-	return a.sendOffchain(ctx, false, nil)
+func (a *covenantlessArkClient) Settle(ctx context.Context, opts ...Option) (string, error) {
+	return a.sendOffchain(ctx, false, nil, opts...)
 }
 
 func (a *covenantlessArkClient) GetTransactionHistory(
@@ -1098,12 +1173,7 @@ func (a *covenantlessArkClient) GetTransactionHistory(
 	txs := append(boardingTxs, offchainTxs...)
 	// Sort the slice by age
 	sort.SliceStable(txs, func(i, j int) bool {
-		txi := txs[i]
-		txj := txs[j]
-		if txi.CreatedAt.Equal(txj.CreatedAt) {
-			return txi.Type > txj.Type
-		}
-		return txi.CreatedAt.After(txj.CreatedAt)
+		return txs[i].CreatedAt.After(txs[j].CreatedAt)
 	})
 
 	return txs, nil
@@ -1344,7 +1414,16 @@ func (a *covenantlessArkClient) sendOnchain(
 
 func (a *covenantlessArkClient) sendOffchain(
 	ctx context.Context, withExpiryCoinselect bool, receivers []Receiver,
+	settleOpts ...Option,
 ) (string, error) {
+
+	options := &Musig2SignOptions{}
+	for _, opt := range settleOpts {
+		if err := opt(options); err != nil {
+			return "", err
+		}
+	}
+
 	if a.wallet.IsLocked() {
 		return "", fmt.Errorf("wallet is locked")
 	}
@@ -1477,13 +1556,13 @@ func (a *covenantlessArkClient) sendOffchain(
 		})
 	}
 
-	roundEphemeralKey, err := secp256k1.GeneratePrivateKey()
+	signerSessions, signerPubKeys, signingType, err := a.handleOptions(options, inputs, []string{})
 	if err != nil {
 		return "", err
 	}
 
 	requestID, err := a.client.RegisterInputsForNextRound(
-		ctx, inputs, hex.EncodeToString(roundEphemeralKey.PubKey().SerializeCompressed()),
+		ctx, inputs,
 	)
 	if err != nil {
 		return "", err
@@ -1491,6 +1570,10 @@ func (a *covenantlessArkClient) sendOffchain(
 
 	if err := a.client.RegisterOutputsForNextRound(
 		ctx, requestID, outputs,
+		&tree.Musig2{
+			CosignersPublicKeys: signerPubKeys,
+			SigningType:         tree.SigningType(signingType),
+		},
 	); err != nil {
 		return "", err
 	}
@@ -1498,7 +1581,7 @@ func (a *covenantlessArkClient) sendOffchain(
 	log.Infof("registered inputs and outputs with request id: %s", requestID)
 
 	roundTxID, err := a.handleRoundStream(
-		ctx, requestID, selectedCoins, selectedBoardingCoins, outputs, roundEphemeralKey,
+		ctx, requestID, selectedCoins, selectedBoardingCoins, outputs, signerSessions,
 	)
 	if err != nil {
 		return "", err
@@ -1585,7 +1668,7 @@ func (a *covenantlessArkClient) handleRoundStream(
 	vtxosToSign []client.TapscriptsVtxo,
 	boardingUtxos []types.Utxo,
 	receivers []client.Output,
-	roundEphemeralKey *secp256k1.PrivateKey,
+	signerSessions []bitcointree.SignerSession,
 ) (string, error) {
 	round, err := a.client.GetRound(ctx, "")
 	if err != nil {
@@ -1606,8 +1689,6 @@ func (a *covenantlessArkClient) handleRoundStream(
 		pingStop()
 		close()
 	}()
-
-	var signerSession bitcointree.SignerSession
 
 	const (
 		start = iota
@@ -1644,10 +1725,9 @@ func (a *covenantlessArkClient) handleRoundStream(
 					continue
 				}
 				log.Info("a round signing started")
-				signerSession, err = a.handleRoundSigningStarted(
-					ctx, roundEphemeralKey, event.(client.RoundSigningStartedEvent),
-				)
-				if err != nil {
+				if err := a.handleRoundSigningStarted(
+					ctx, signerSessions, event.(client.RoundSigningStartedEvent),
+				); err != nil {
 					return "", err
 				}
 				step++
@@ -1659,7 +1739,7 @@ func (a *covenantlessArkClient) handleRoundStream(
 				pingStop()
 				log.Info("round combined nonces generated")
 				if err := a.handleRoundSigningNoncesGenerated(
-					ctx, event.(client.RoundSigningNoncesGeneratedEvent), roundEphemeralKey, signerSession,
+					ctx, event.(client.RoundSigningNoncesGeneratedEvent), signerSessions,
 				); err != nil {
 					return "", err
 				}
@@ -1699,21 +1779,21 @@ func (a *covenantlessArkClient) handleRoundStream(
 }
 
 func (a *covenantlessArkClient) handleRoundSigningStarted(
-	ctx context.Context, ephemeralKey *secp256k1.PrivateKey, event client.RoundSigningStartedEvent,
-) (signerSession bitcointree.SignerSession, err error) {
-	sweepClosure := tree.CSVSigClosure{
+	ctx context.Context, signerSessions []bitcointree.SignerSession, event client.RoundSigningStartedEvent,
+) error {
+	sweepClosure := tree.CSVMultisigClosure{
 		MultisigClosure: tree.MultisigClosure{PubKeys: []*secp256k1.PublicKey{a.ServerPubKey}},
-		Locktime:        a.RoundLifetime,
+		Locktime:        a.VtxoTreeExpiry,
 	}
 
 	script, err := sweepClosure.Script()
 	if err != nil {
-		return
+		return err
 	}
 
 	roundTx, err := psbt.NewFromRawBytes(strings.NewReader(event.UnsignedRoundTx), true)
 	if err != nil {
-		return
+		return err
 	}
 
 	sharedOutput := roundTx.UnsignedTx.TxOut[0]
@@ -1723,52 +1803,90 @@ func (a *covenantlessArkClient) handleRoundSigningStarted(
 	sweepTapTree := txscript.AssembleTaprootScriptTree(sweepTapLeaf)
 	root := sweepTapTree.RootNode.TapHash()
 
-	signerSession = bitcointree.NewTreeSignerSession(
-		ephemeralKey, sharedOutputValue, event.UnsignedTree, root.CloneBytes(),
-	)
+	generateAndSendNonces := func(session bitcointree.SignerSession) error {
+		if err := session.Init(root.CloneBytes(), sharedOutputValue, event.UnsignedTree); err != nil {
+			return err
+		}
 
-	if err = signerSession.SetKeys(event.CosignersPubKeys); err != nil {
-		return
+		nonces, err := session.GetNonces()
+		if err != nil {
+			return err
+		}
+
+		return a.arkClient.client.SubmitTreeNonces(ctx, event.ID, session.GetPublicKey(), nonces)
 	}
 
-	nonces, err := signerSession.GetNonces()
-	if err != nil {
-		return
+	errChan := make(chan error, len(signerSessions))
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(len(signerSessions))
+
+	for _, session := range signerSessions {
+		go func(session bitcointree.SignerSession) {
+			defer waitGroup.Done()
+			if err := generateAndSendNonces(session); err != nil {
+				errChan <- err
+			}
+		}(session)
 	}
 
-	myPubkey := hex.EncodeToString(ephemeralKey.PubKey().SerializeCompressed())
+	waitGroup.Wait()
 
-	err = a.arkClient.client.SubmitTreeNonces(ctx, event.ID, myPubkey, nonces)
+	close(errChan)
 
-	return
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (a *covenantlessArkClient) handleRoundSigningNoncesGenerated(
 	ctx context.Context,
 	event client.RoundSigningNoncesGeneratedEvent,
-	ephemeralKey *secp256k1.PrivateKey,
-	signerSession bitcointree.SignerSession,
+	signerSessions []bitcointree.SignerSession,
 ) error {
-	if signerSession == nil {
+	if len(signerSessions) <= 0 {
 		return fmt.Errorf("tree signer session not set")
 	}
 
-	if err := signerSession.SetAggregatedNonces(event.Nonces); err != nil {
-		return err
+	sign := func(session bitcointree.SignerSession) error {
+		session.SetAggregatedNonces(event.Nonces)
+
+		sigs, err := session.Sign()
+		if err != nil {
+			return err
+		}
+
+		return a.arkClient.client.SubmitTreeSignatures(
+			ctx,
+			event.ID,
+			session.GetPublicKey(),
+			sigs,
+		)
 	}
 
-	sigs, err := signerSession.Sign()
-	if err != nil {
-		return err
+	errChan := make(chan error, len(signerSessions))
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(len(signerSessions))
+
+	for _, session := range signerSessions {
+		go func(session bitcointree.SignerSession) {
+			defer waitGroup.Done()
+			if err := sign(session); err != nil {
+				errChan <- err
+			}
+		}(session)
 	}
 
-	if err := a.arkClient.client.SubmitTreeSignatures(
-		ctx,
-		event.ID,
-		hex.EncodeToString(ephemeralKey.PubKey().SerializeCompressed()),
-		sigs,
-	); err != nil {
-		return err
+	waitGroup.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1878,7 +1996,7 @@ func (a *covenantlessArkClient) validateVtxoTree(
 
 	if !utils.IsOnchainOnly(receivers) {
 		if err := bitcointree.ValidateVtxoTree(
-			event.Tree, roundTx, a.Config.ServerPubKey, a.RoundLifetime,
+			event.Tree, roundTx, a.Config.ServerPubKey, a.VtxoTreeExpiry,
 		); err != nil {
 			return err
 		}
@@ -2101,9 +2219,21 @@ func (a *covenantlessArkClient) createAndSignForfeits(
 			return nil, err
 		}
 
+		vtxoLocktime := common.AbsoluteLocktime(0)
+		if cltv, ok := forfeitClosure.(*tree.CLTVMultisigClosure); ok {
+			vtxoLocktime = cltv.Locktime
+		}
+
 		for _, connectorPset := range connectorsPsets {
 			forfeits, err := bitcointree.BuildForfeitTxs(
-				connectorPset, vtxoInput, vtxo.Amount, a.Dust, feeAmount, vtxoOutputScript, forfeitPkScript,
+				connectorPset,
+				vtxoInput,
+				vtxo.Amount,
+				a.Dust,
+				feeAmount,
+				vtxoOutputScript,
+				forfeitPkScript,
+				uint32(vtxoLocktime),
 			)
 			if err != nil {
 				return nil, err
@@ -2295,9 +2425,7 @@ func (a *covenantlessArkClient) getOffchainBalance(
 	return balance, amountByExpiration, nil
 }
 
-func (a *covenantlessArkClient) getAllBoardingUtxos(
-	ctx context.Context,
-) ([]types.Utxo, map[string]struct{}, error) {
+func (a *covenantlessArkClient) getAllBoardingUtxos(ctx context.Context) ([]types.Utxo, map[string]struct{}, error) {
 	_, boardingAddrs, _, err := a.wallet.GetAddresses(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -2399,9 +2527,7 @@ func (a *covenantlessArkClient) getClaimableBoardingUtxos(ctx context.Context, o
 	return claimable, nil
 }
 
-func (a *covenantlessArkClient) getVtxos(
-	ctx context.Context, opts *CoinSelectOptions,
-) ([]client.Vtxo, error) {
+func (a *covenantlessArkClient) getVtxos(ctx context.Context, opts *CoinSelectOptions) ([]client.Vtxo, error) {
 	spendableVtxos, _, err := a.ListVtxos(ctx)
 	if err != nil {
 		return nil, err
@@ -2480,96 +2606,175 @@ func findVtxosBySpentBy(allVtxos []client.Vtxo, txid string) (vtxos []client.Vtx
 	return
 }
 
-func vtxosToTxsCovenantless(
-	spendable, spent []client.Vtxo, ignoreVtxosByRound map[string]struct{},
-) ([]types.Transaction, error) {
-	txs := make([]types.Transaction, 0)
-	vtxosByRound := make(map[string][]client.Vtxo)
-	for _, v := range append(spendable, spent...) {
-		if _, ok := vtxosByRound[v.RoundTxid]; !ok {
-			vtxosByRound[v.RoundTxid] = make([]client.Vtxo, 0)
-		}
-		vtxosByRound[v.RoundTxid] = append(vtxosByRound[v.RoundTxid], v)
-
-		if len(v.SpentBy) > 0 {
-			ignoreVtxosByRound[v.SpentBy] = struct{}{}
+func findVtxosSpent(vtxos []client.Vtxo, id string) []client.Vtxo {
+	var result []client.Vtxo
+	leftVtxos := make([]client.Vtxo, 0)
+	for _, v := range vtxos {
+		if v.SpentBy == id {
+			result = append(result, v)
+		} else {
+			leftVtxos = append(leftVtxos, v)
 		}
 	}
+	// Update the given list with only the left vtxos.
+	copy(vtxos, leftVtxos)
+	return result
+}
 
-	for round := range vtxosByRound {
-		sort.SliceStable(vtxosByRound[round], func(i, j int) bool {
-			return vtxosByRound[round][i].CreatedAt.Before(vtxosByRound[round][j].CreatedAt)
+func findVtxosSpentInSettlement(vtxos []client.Vtxo, vtxo client.Vtxo) []client.Vtxo {
+	if vtxo.IsPending {
+		return nil
+	}
+	return findVtxosSpent(vtxos, vtxo.RoundTxid)
+}
+
+func findVtxosSpentInPayment(vtxos []client.Vtxo, vtxo client.Vtxo) []client.Vtxo {
+	return findVtxosSpent(vtxos, vtxo.Txid)
+}
+
+func findVtxosResultedFromSpentBy(vtxos []client.Vtxo, spentByTxid string) []client.Vtxo {
+	var result []client.Vtxo
+	for _, v := range vtxos {
+		if !v.IsPending && v.RoundTxid == spentByTxid {
+			result = append(result, v)
+			break
+		}
+		if v.Txid == spentByTxid {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func reduceVtxosAmount(vtxos []client.Vtxo) uint64 {
+	var total uint64
+	for _, v := range vtxos {
+		total += v.Amount
+	}
+	return total
+}
+
+func getVtxo(usedVtxos []client.Vtxo, spentByVtxos []client.Vtxo) client.Vtxo {
+	if len(usedVtxos) > 0 {
+		return usedVtxos[0]
+	} else if len(spentByVtxos) > 0 {
+		return spentByVtxos[0]
+	}
+	return client.Vtxo{}
+}
+
+func isSettled(vtxos []client.Vtxo, vtxo client.Vtxo) bool {
+	if len(vtxo.SpentBy) == 0 {
+		return !vtxo.IsPending
+	}
+	for _, v := range vtxos {
+		if v.RoundTxid == vtxo.SpentBy {
+			return true
+		}
+		if v.Txid == vtxo.SpentBy {
+			return isSettled(vtxos, v)
+		}
+	}
+	return false
+}
+
+func vtxosToTxsCovenantless(
+	spendable, spent []client.Vtxo, boardingRounds map[string]struct{},
+) ([]types.Transaction, error) {
+	txs := make([]types.Transaction, 0)
+
+	// Receivals
+
+	// All vtxos are receivals unless:
+	// - they resulted from a settlement (either boarding or refresh)
+	// - they are the change of a spend tx
+	vtxosLeftToCheck := append([]client.Vtxo{}, spent...)
+	for _, vtxo := range append(spendable, spent...) {
+		if _, ok := boardingRounds[vtxo.RoundTxid]; !vtxo.IsPending && ok {
+			continue
+		}
+		settleVtxos := findVtxosSpentInSettlement(vtxosLeftToCheck, vtxo)
+		settleAmount := reduceVtxosAmount(settleVtxos)
+		if vtxo.Amount <= settleAmount {
+			continue // settlement or change, ignore
+		}
+
+		spentVtxos := findVtxosSpentInPayment(vtxosLeftToCheck, vtxo)
+		spentAmount := reduceVtxosAmount(spentVtxos)
+		if vtxo.Amount <= spentAmount {
+			continue // settlement or change, ignore
+		}
+
+		txKey := types.TransactionKey{
+			RoundTxid: vtxo.RoundTxid,
+		}
+		settled := !vtxo.IsPending
+		if vtxo.IsPending {
+			txKey = types.TransactionKey{
+				RedeemTxid: vtxo.Txid,
+			}
+			settled = isSettled(append(spendable, spent...), vtxo)
+		}
+
+		txs = append(txs, types.Transaction{
+			TransactionKey: txKey,
+			Amount:         vtxo.Amount - settleAmount - spentAmount,
+			Type:           types.TxReceived,
+			CreatedAt:      vtxo.CreatedAt,
+			Settled:        settled,
 		})
 	}
 
-	for _, vtxos := range vtxosByRound {
-		v := vtxos[0]
-		if v.IsPending {
-			txs = append(txs, types.Transaction{
-				TransactionKey: types.TransactionKey{
-					RedeemTxid: v.Txid,
-				},
-				Amount:    v.Amount,
-				Type:      types.TxReceived,
-				CreatedAt: v.CreatedAt,
-			})
-		} else if _, ok := ignoreVtxosByRound[v.RoundTxid]; !ok {
-			txs = append(txs, types.Transaction{
-				TransactionKey: types.TransactionKey{
-					RoundTxid: v.RoundTxid,
-				},
-				Amount:    v.Amount,
-				Type:      types.TxReceived,
-				CreatedAt: v.CreatedAt,
-				Settled:   true,
-			})
+	// Sendings
+
+	// All "spentBy" vtxos are payments unless:
+	// - they are settlements
+
+	// aggregate spent by spentId
+	vtxosBySpentBy := make(map[string][]client.Vtxo)
+	for _, v := range spent {
+		if len(v.SpentBy) <= 0 {
+			continue
 		}
-		if len(vtxos) > 1 {
-			for _, v := range vtxos[1:] {
-				var tx types.Transaction
-				if v.VOut > 0 {
-					var spentAmount uint64
-					for _, vv := range vtxos {
-						if vv.SpentBy == v.Txid {
-							spentAmount += vv.Amount
-						}
-					}
-					tx = types.Transaction{
-						TransactionKey: types.TransactionKey{
-							RedeemTxid: v.Txid,
-						},
-						Amount:    spentAmount - v.Amount,
-						Type:      types.TxSent,
-						CreatedAt: v.CreatedAt,
-					}
-				} else {
-					tx = types.Transaction{
-						TransactionKey: types.TransactionKey{
-							RedeemTxid: v.Txid,
-						},
-						Amount:    v.Amount,
-						Type:      types.TxReceived,
-						CreatedAt: v.CreatedAt,
-					}
-				}
-				txs = append(txs, tx)
-			}
-			lastVtxo := vtxos[len(vtxos)-1]
-			if len(lastVtxo.SpentBy) > 0 {
-				for i := range txs {
-					txs[i].Settled = true
-				}
+
+		if _, ok := vtxosBySpentBy[v.SpentBy]; !ok {
+			vtxosBySpentBy[v.SpentBy] = make([]client.Vtxo, 0)
+		}
+		vtxosBySpentBy[v.SpentBy] = append(vtxosBySpentBy[v.SpentBy], v)
+	}
+
+	for sb := range vtxosBySpentBy {
+		resultedVtxos := findVtxosResultedFromSpentBy(append(spendable, spent...), sb)
+		resultedAmount := reduceVtxosAmount(resultedVtxos)
+		spentAmount := reduceVtxosAmount(vtxosBySpentBy[sb])
+		if spentAmount <= resultedAmount {
+			continue // settlement or change, ignore
+		}
+
+		vtxo := getVtxo(resultedVtxos, vtxosBySpentBy[sb])
+
+		txKey := types.TransactionKey{
+			RoundTxid: vtxo.RoundTxid,
+		}
+		if vtxo.IsPending {
+			txKey = types.TransactionKey{
+				RedeemTxid: vtxo.Txid,
 			}
 		}
+
+		txs = append(txs, types.Transaction{
+			TransactionKey: txKey,
+			Amount:         spentAmount - resultedAmount,
+			Type:           types.TxSent,
+			CreatedAt:      vtxo.CreatedAt,
+			Settled:        true,
+			SpentBy:        sb,
+		})
+
 	}
 
 	sort.SliceStable(txs, func(i, j int) bool {
-		txi := txs[i]
-		txj := txs[j]
-		if txi.CreatedAt.Equal(txj.CreatedAt) {
-			return txi.Type > txj.Type
-		}
-		return txi.CreatedAt.After(txj.CreatedAt)
+		return txs[i].CreatedAt.After(txs[j].CreatedAt)
 	})
 
 	return txs, nil
@@ -2584,6 +2789,8 @@ func buildRedeemTx(
 	vtxos []redeemTxInput,
 	receivers []Receiver,
 	feeRate chainfee.SatPerVByte,
+	extraWitnessSizes map[client.Outpoint]int,
+	withZeroFees bool,
 ) (string, error) {
 	if len(vtxos) <= 0 {
 		return "", fmt.Errorf("missing vtxos")
@@ -2636,11 +2843,16 @@ func buildRedeemTx(
 			ControlBlock:   ctrlBlock,
 		}
 
+		extraWitnessSize := 0
+		if size, ok := extraWitnessSizes[client.Outpoint{Txid: vtxo.Txid, VOut: vtxo.VOut}]; ok {
+			extraWitnessSize = size
+		}
+
 		ins = append(ins, common.VtxoInput{
 			Outpoint:    vtxoOutpoint,
 			Tapscript:   tapscript,
 			Amount:      int64(vtxo.Amount),
-			WitnessSize: closure.WitnessSize(),
+			WitnessSize: closure.WitnessSize(extraWitnessSize),
 		})
 	}
 
@@ -2670,11 +2882,13 @@ func buildRedeemTx(
 			return "", err
 		}
 
-		// Deduct the min relay fee from the very last receiver which is supposed
-		// to be the change in case it's not a send-all.
 		value := receiver.Amount()
-		if i == len(receivers)-1 {
-			value -= uint64(fees)
+		if !withZeroFees {
+			// Deduct the min relay fee from the very last receiver which is supposed
+			// to be the change in case it's not a send-all.
+			if i == len(receivers)-1 {
+				value -= uint64(fees)
+			}
 		}
 		outs = append(outs, &wire.TxOut{
 			Value:    int64(value),
@@ -2683,4 +2897,86 @@ func buildRedeemTx(
 	}
 
 	return bitcointree.BuildRedeemTx(ins, outs)
+}
+
+func (a *covenantlessArkClient) handleOptions(options *Musig2SignOptions, inputs []client.Input, notesInputs []string) ([]bitcointree.SignerSession, []string, tree.SigningType, error) {
+	var signingType tree.SigningType
+	if options.SigningType != nil {
+		signingType = *options.SigningType
+	} else {
+		signingType = tree.SignBranch
+	}
+
+	sessions := make([]bitcointree.SignerSession, 0)
+	sessions = append(sessions, options.ExtraSignerSessions...)
+
+	if !options.WalletSignerDisabled {
+		outpoints := make([]client.Outpoint, 0, len(inputs))
+		for _, input := range inputs {
+			outpoints = append(outpoints, input.Outpoint)
+		}
+
+		signerSession, err := a.wallet.NewVtxoTreeSigner(
+			context.Background(),
+			inputsToDerivationPath(outpoints, notesInputs),
+		)
+		if err != nil {
+			return nil, nil, signingType, err
+		}
+		sessions = append(sessions, signerSession)
+	}
+
+	if len(sessions) == 0 {
+		return nil, nil, signingType, fmt.Errorf("no signer sessions")
+	}
+
+	signerPubKeys := make([]string, 0)
+	for _, session := range sessions {
+		signerPubKeys = append(signerPubKeys, session.GetPublicKey())
+	}
+
+	return sessions, signerPubKeys, signingType, nil
+}
+
+func inputsToDerivationPath(inputs []client.Outpoint, notesInputs []string) string {
+	// sort arknotes
+	slices.SortStableFunc(notesInputs, func(i, j string) int {
+		return strings.Compare(i, j)
+	})
+
+	// sort outpoints
+	slices.SortStableFunc(inputs, func(i, j client.Outpoint) int {
+		txidCmp := strings.Compare(i.Txid, j.Txid)
+		if txidCmp != 0 {
+			return txidCmp
+		}
+		return int(i.VOut - j.VOut)
+	})
+
+	// serialize outpoints and arknotes
+
+	var buf bytes.Buffer
+
+	for _, input := range inputs {
+		buf.WriteString(input.Txid)
+		buf.WriteString(strconv.Itoa(int(input.VOut)))
+	}
+
+	for _, note := range notesInputs {
+		buf.WriteString(note)
+	}
+
+	// hash the serialized data
+	hash := sha256.Sum256(buf.Bytes())
+
+	// convert hash to bip32 derivation path
+	// split the 32-byte hash into 8 uint32 values (4 bytes each)
+	path := "m"
+	for i := 0; i < 8; i++ {
+		// Convert 4 bytes to uint32 using big-endian encoding
+		segment := binary.BigEndian.Uint32(hash[i*4 : (i+1)*4])
+		path += fmt.Sprintf("/%d'", segment)
+	}
+
+	return path
 }

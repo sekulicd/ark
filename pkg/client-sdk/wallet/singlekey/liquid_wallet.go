@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/ark-network/ark/common"
+	"github.com/ark-network/ark/common/bitcointree"
 	"github.com/ark-network/ark/common/tree"
 	"github.com/ark-network/ark/pkg/client-sdk/explorer"
 	"github.com/ark-network/ark/pkg/client-sdk/internal/utils"
@@ -228,7 +229,7 @@ func (s *liquidWallet) SignTransaction(
 
 				sign := false
 				switch c := closure.(type) {
-				case *tree.CSVSigClosure:
+				case *tree.CSVMultisigClosure:
 					for _, key := range c.MultisigClosure.PubKeys {
 						if bytes.Equal(schnorr.SerializePubKey(key), myPubkey) {
 							sign = true
@@ -243,6 +244,13 @@ func (s *liquidWallet) SignTransaction(
 						}
 					}
 				case *tree.CLTVMultisigClosure:
+					for _, key := range c.MultisigClosure.PubKeys {
+						if bytes.Equal(schnorr.SerializePubKey(key), myPubkey) {
+							sign = true
+							break
+						}
+					}
+				case *tree.ConditionMultisigClosure:
 					for _, key := range c.MultisigClosure.PubKeys {
 						if bytes.Equal(schnorr.SerializePubKey(key), myPubkey) {
 							sign = true
@@ -318,6 +326,10 @@ func (w *liquidWallet) SignMessage(
 	return hex.EncodeToString(sig.Serialize()), nil
 }
 
+func (w *liquidWallet) NewVtxoTreeSigner(context.Context, string) (bitcointree.SignerSession, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (w *liquidWallet) getAddress(
 	ctx context.Context,
 ) (
@@ -356,7 +368,7 @@ func (w *liquidWallet) getAddress(
 	boardingVtxoScript := tree.NewDefaultVtxoScript(
 		w.walletData.PubKey,
 		data.ServerPubKey,
-		common.Locktime{
+		common.RelativeLocktime{
 			Type:  data.UnilateralExitDelay.Type,
 			Value: data.UnilateralExitDelay.Value * 2,
 		},

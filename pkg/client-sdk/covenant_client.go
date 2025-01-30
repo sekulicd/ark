@@ -21,6 +21,7 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	log "github.com/sirupsen/logrus"
@@ -210,7 +211,7 @@ func (a *covenantArkClient) InitWithWallet(ctx context.Context, args InitWithWal
 	return nil
 }
 
-func (a *covenantArkClient) RedeemNotes(ctx context.Context, notes []string) (string, error) {
+func (a *covenantArkClient) RedeemNotes(_ context.Context, _ []string, _ ...Option) (string, error) {
 	return "", fmt.Errorf("not implemented")
 }
 
@@ -419,6 +420,7 @@ func (a *covenantArkClient) SendOnChain(
 func (a *covenantArkClient) SendOffChain(
 	ctx context.Context,
 	withExpiryCoinselect bool, receivers []Receiver,
+	_ bool,
 ) (string, error) {
 	for _, receiver := range receivers {
 		if receiver.IsOnchain() {
@@ -491,6 +493,7 @@ func (a *covenantArkClient) UnilateralRedeem(ctx context.Context) error {
 func (a *covenantArkClient) CollaborativeRedeem(
 	ctx context.Context,
 	addr string, amount uint64, withExpiryCoinselect bool,
+	opts ...Option,
 ) (string, error) {
 	if a.wallet.IsLocked() {
 		return "", fmt.Errorf("wallet is locked")
@@ -584,12 +587,12 @@ func (a *covenantArkClient) CollaborativeRedeem(
 		})
 	}
 
-	requestID, err := a.client.RegisterInputsForNextRound(ctx, inputs, "")
+	requestID, err := a.client.RegisterInputsForNextRound(ctx, inputs)
 	if err != nil {
 		return "", err
 	}
 
-	if err := a.client.RegisterOutputsForNextRound(ctx, requestID, receivers); err != nil {
+	if err := a.client.RegisterOutputsForNextRound(ctx, requestID, receivers, nil); err != nil {
 		return "", err
 	}
 
@@ -603,6 +606,7 @@ func (a *covenantArkClient) CollaborativeRedeem(
 
 func (a *covenantArkClient) Settle(
 	ctx context.Context,
+	_ ...Option, // no options for covenant
 ) (string, error) {
 	return a.sendOffchain(ctx, false, nil)
 }
@@ -626,7 +630,7 @@ func (a *covenantArkClient) GetTransactionHistory(
 
 	boardingTxs := a.getBoardingTxs(ctx)
 
-	return vtxosToTxsCovenant(config.RoundLifetime, spendableVtxos, spentVtxos, boardingTxs)
+	return vtxosToTxsCovenant(config.VtxoTreeExpiry, spendableVtxos, spentVtxos, boardingTxs)
 }
 
 func (a *covenantArkClient) getAllBoardingUtxos(ctx context.Context) ([]types.Utxo, error) {
@@ -1011,13 +1015,13 @@ func (a *covenantArkClient) sendOffchain(
 		})
 	}
 
-	requestID, err := a.client.RegisterInputsForNextRound(ctx, inputs, "")
+	requestID, err := a.client.RegisterInputsForNextRound(ctx, inputs)
 	if err != nil {
 		return "", err
 	}
 
 	if err := a.client.RegisterOutputsForNextRound(
-		ctx, requestID, outputs,
+		ctx, requestID, outputs, nil,
 	); err != nil {
 		return "", err
 	}
@@ -1276,7 +1280,7 @@ func (a *covenantArkClient) validateVtxoTree(
 
 	if !utils.IsOnchainOnly(receivers) {
 		if err := tree.ValidateVtxoTree(
-			event.Tree, roundTx, a.Config.ServerPubKey, a.RoundLifetime,
+			event.Tree, roundTx, a.Config.ServerPubKey, a.VtxoTreeExpiry,
 		); err != nil {
 			return err
 		}
@@ -1469,6 +1473,11 @@ func (a *covenantArkClient) createAndSignForfeits(
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if cltv, ok := forfeitClosure.(*tree.CLTVMultisigClosure); ok {
+			vtxoInput.TimeLock = uint32(cltv.Locktime)
+			vtxoInput.Sequence = wire.MaxTxInSequenceNum - 1
 		}
 
 		for _, connectorPset := range connectorsPsets {
@@ -1719,7 +1728,9 @@ func (a *covenantArkClient) getBoardingTxs(ctx context.Context) (transactions []
 }
 
 func vtxosToTxsCovenant(
-	roundLifetime common.Locktime, spendable, spent []client.Vtxo, boardingTxs []types.Transaction,
+	vtxoTreeExpiry common.RelativeLocktime,
+	spendable, spent []client.Vtxo,
+	boardingTxs []types.Transaction,
 ) ([]types.Transaction, error) {
 	transactions := make([]types.Transaction, 0)
 	unconfirmedBoardingTxs := make([]types.Transaction, 0)
@@ -1766,7 +1777,7 @@ func vtxosToTxsCovenant(
 			},
 			Amount:    uint64(math.Abs(float64(amount))),
 			Type:      txType,
-			CreatedAt: getCreatedAtFromExpiry(roundLifetime, v.ExpiresAt),
+			CreatedAt: getCreatedAtFromExpiry(vtxoTreeExpiry, v.ExpiresAt),
 		})
 	}
 

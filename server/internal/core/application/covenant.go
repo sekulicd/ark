@@ -32,9 +32,9 @@ type covenantService struct {
 	network             common.Network
 	pubkey              *secp256k1.PublicKey
 	roundInterval       int64
-	roundLifetime       common.Locktime
-	unilateralExitDelay common.Locktime
-	boardingExitDelay   common.Locktime
+	vtxoTreeExpiry      common.RelativeLocktime
+	unilateralExitDelay common.RelativeLocktime
+	boardingExitDelay   common.RelativeLocktime
 
 	nostrDefaultRelays []string
 
@@ -58,7 +58,7 @@ type covenantService struct {
 func NewCovenantService(
 	network common.Network,
 	roundInterval int64,
-	roundLifetime, unilateralExitDelay, boardingExitDelay common.Locktime,
+	vtxoTreeExpiry, unilateralExitDelay, boardingExitDelay common.RelativeLocktime,
 	nostrDefaultRelays []string,
 	walletSvc ports.WalletService, repoManager ports.RepoManager,
 	builder ports.TxBuilder, scanner ports.BlockchainScanner,
@@ -86,7 +86,7 @@ func NewCovenantService(
 	svc := &covenantService{
 		network:             network,
 		pubkey:              pubkey,
-		roundLifetime:       roundLifetime,
+		vtxoTreeExpiry:      vtxoTreeExpiry,
 		roundInterval:       roundInterval,
 		unilateralExitDelay: unilateralExitDelay,
 		boardingExitDelay:   boardingExitDelay,
@@ -343,7 +343,7 @@ func (s *covenantService) newBoardingInput(tx *transaction.Transaction, input po
 	}, nil
 }
 
-func (s *covenantService) ClaimVtxos(ctx context.Context, creds string, receivers []domain.Receiver) error {
+func (s *covenantService) ClaimVtxos(ctx context.Context, creds string, receivers []domain.Receiver, _ *tree.Musig2) error {
 	// Check credentials
 	request, ok := s.txRequests.view(creds)
 	if !ok {
@@ -364,15 +364,15 @@ func (s *covenantService) ClaimVtxos(ctx context.Context, creds string, receiver
 	if err := request.AddReceivers(receivers); err != nil {
 		return err
 	}
-	return s.txRequests.update(*request)
+	return s.txRequests.update(*request, nil)
 }
 
 func (s *covenantService) UpdateTxRequestStatus(_ context.Context, id string) error {
 	return s.txRequests.updatePingTimestamp(id)
 }
 
-func (s *covenantService) SubmitRedeemTx(context.Context, string) (string, error) {
-	return "", fmt.Errorf("unimplemented")
+func (s *covenantService) SubmitRedeemTx(context.Context, string) (string, string, error) {
+	return "", "", fmt.Errorf("unimplemented")
 }
 
 func (s *covenantService) SignVtxos(ctx context.Context, forfeitTxs []string) error {
@@ -458,7 +458,7 @@ func (s *covenantService) GetInfo(ctx context.Context) (*ServiceInfo, error) {
 
 	return &ServiceInfo{
 		PubKey:              pubkey,
-		RoundLifetime:       int64(s.roundLifetime.Value),
+		VtxoTreeExpiry:      int64(s.vtxoTreeExpiry.Value),
 		UnilateralExitDelay: int64(s.unilateralExitDelay.Value),
 		RoundInterval:       s.roundInterval,
 		Network:             s.network.Name,
@@ -471,16 +471,6 @@ func (s *covenantService) GetInfo(ctx context.Context) (*ServiceInfo, error) {
 			RoundInterval: marketHourConfig.RoundInterval,
 		},
 	}, nil
-}
-
-func (s *covenantService) RegisterCosignerPubkey(ctx context.Context, requestID string, _ string) error {
-	// if the user sends an ephemeral pubkey, something is going wrong client-side
-	// we should delete the associated tx request
-	if err := s.txRequests.delete(requestID); err != nil {
-		log.WithError(err).Warnf("failed to delete tx request %s", requestID)
-	}
-
-	return ErrTreeSigningNotRequired
 }
 
 func (s *covenantService) RegisterCosignerNonces(context.Context, string, *secp256k1.PublicKey, string) error {
@@ -574,14 +564,14 @@ func (s *covenantService) startFinalization() {
 		return
 	}
 
-	sweptRounds, err := s.repoManager.Rounds().GetSweptRounds(ctx)
+	sweptRounds, err := s.repoManager.Rounds().GetSweptRoundsConnectorAddress(ctx)
 	if err != nil {
 		round.Fail(fmt.Errorf("failed to retrieve swept rounds: %s", err))
 		log.WithError(err).Warn("failed to retrieve swept rounds")
 		return
 	}
 
-	unsignedRoundTx, tree, connectorAddress, connectors, err := s.builder.BuildRoundTx(s.pubkey, requests, boardingInputs, sweptRounds)
+	unsignedRoundTx, tree, connectorAddress, connectors, err := s.builder.BuildRoundTx(s.pubkey, requests, boardingInputs, sweptRounds, nil)
 	if err != nil {
 		round.Fail(fmt.Errorf("failed to create round tx: %s", err))
 		log.WithError(err).Warn("failed to create round tx")
@@ -1004,7 +994,7 @@ func (s *covenantService) scheduleSweepVtxosForRound(round *domain.Round) {
 		return
 	}
 
-	expirationTime := s.sweeper.scheduler.AddNow(int64(s.roundLifetime.Value))
+	expirationTime := s.sweeper.scheduler.AddNow(int64(s.vtxoTreeExpiry.Value))
 
 	if err := s.sweeper.schedule(
 		expirationTime, round.Txid, round.VtxoTree,
@@ -1077,19 +1067,18 @@ func (s *covenantService) stopWatchingVtxos(vtxos []domain.Vtxo) {
 }
 
 func (s *covenantService) restoreWatchingVtxos() error {
-	sweepableRounds, err := s.repoManager.Rounds().GetSweepableRounds(context.Background())
+	ctx := context.Background()
+
+	expiredRounds, err := s.repoManager.Rounds().GetExpiredRoundsTxid(ctx)
 	if err != nil {
 		return err
 	}
 
 	vtxos := make([]domain.Vtxo, 0)
-
-	for _, round := range sweepableRounds {
-		fromRound, err := s.repoManager.Vtxos().GetVtxosForRound(
-			context.Background(), round.Txid,
-		)
+	for _, txid := range expiredRounds {
+		fromRound, err := s.repoManager.Vtxos().GetVtxosForRound(ctx, txid)
 		if err != nil {
-			log.WithError(err).Warnf("failed to retrieve vtxos for round %s", round.Txid)
+			log.WithError(err).Warnf("failed to retrieve vtxos for round %s", txid)
 			continue
 		}
 		for _, v := range fromRound {

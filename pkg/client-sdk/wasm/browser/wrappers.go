@@ -228,7 +228,7 @@ func SendOnChainWrapper() js.Func {
 
 func SendOffChainWrapper() js.Func {
 	return JSPromise(func(args []js.Value) (interface{}, error) {
-		if len(args) != 2 {
+		if len(args) != 2 && len(args) != 3 {
 			return nil, errors.New("invalid number of args")
 		}
 
@@ -238,8 +238,13 @@ func SendOffChainWrapper() js.Func {
 			return nil, err
 		}
 
+		withZeroFees := false
+		if len(args) == 3 {
+			withZeroFees = args[2].Bool()
+		}
+
 		txID, err := arkSdkClient.SendOffChain(
-			context.Background(), withExpiryCoinselect, receivers,
+			context.Background(), withExpiryCoinselect, receivers, withZeroFees,
 		)
 		if err != nil {
 			return nil, err
@@ -304,6 +309,7 @@ func GetTransactionHistoryWrapper() js.Func {
 				"type":         record.Type,
 				"settled":      record.Settled,
 				"createdAt":    record.CreatedAt.Format(time.RFC3339),
+				"spentBy":      record.SpentBy,
 			})
 		}
 		result, err := json.MarshalIndent(rawHistory, "", "  ")
@@ -369,14 +375,14 @@ func GetNetworkWrapper() js.Func {
 	})
 }
 
-func GetRoundLifetimeWrapper() js.Func {
-	return js.FuncOf(func(this js.Value, p []js.Value) interface{} {
+func GetVtxoTreeExpiryWrapper() js.Func {
+	return js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		data, _ := arkSdkClient.GetConfigData(context.Background())
-		var roundLifettime int64
+		var vtxoTreeExpiry int64
 		if data != nil {
-			roundLifettime = data.RoundLifetime.Seconds()
+			vtxoTreeExpiry = data.VtxoTreeExpiry.Seconds()
 		}
-		return js.ValueOf(roundLifettime)
+		return js.ValueOf(vtxoTreeExpiry)
 	})
 }
 
@@ -399,6 +405,12 @@ func GetDustWrapper() js.Func {
 			dust = data.Dust
 		}
 		return js.ValueOf(dust)
+	})
+}
+
+func GetVersionWrapper() js.Func {
+	return js.FuncOf(func(this js.Value, p []js.Value) interface{} {
+		return js.ValueOf(version)
 	})
 }
 
@@ -437,6 +449,22 @@ func SetNostrNotificationRecipientWrapper() js.Func {
 		nostrRecipient := args[0].String()
 		err := arkSdkClient.SetNostrNotificationRecipient(context.Background(), nostrRecipient)
 		return nil, err
+	})
+}
+
+func SignTransactionWrapper() js.Func {
+	return JSPromise(func(args []js.Value) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, errors.New("invalid number of args")
+		}
+
+		tx := args[0]
+
+		if tx.Type() != js.TypeString {
+			return nil, errors.New("invalid transaction argument: expected string")
+		}
+
+		return arkSdkClient.SignTransaction(context.Background(), tx.String())
 	})
 }
 

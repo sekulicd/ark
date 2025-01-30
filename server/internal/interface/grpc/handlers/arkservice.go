@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"sync"
 
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	arkv1 "github.com/ark-network/ark/api-spec/protobuf/gen/ark/v1"
 	"github.com/ark-network/ark/common/bitcointree"
 	"github.com/ark-network/ark/common/descriptor"
+	"github.com/ark-network/ark/common/tree"
 	"github.com/ark-network/ark/server/internal/core/application"
 	"github.com/ark-network/ark/server/internal/core/domain"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -21,6 +19,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+type service interface {
+	arkv1.ArkServiceServer
+	arkv1.ExplorerServiceServer
+}
+
 type handler struct {
 	svc application.Service
 
@@ -28,7 +31,7 @@ type handler struct {
 	transactionsListenerHandler *listenerHanlder[*arkv1.GetTransactionsStreamResponse]
 }
 
-func NewHandler(service application.Service) arkv1.ArkServiceServer {
+func NewHandler(service application.Service) service {
 	h := &handler{
 		svc:                         service,
 		eventsListenerHandler:       newListenerHandler[*arkv1.GetEventStreamResponse](),
@@ -60,7 +63,7 @@ func (h *handler) GetInfo(
 
 	return &arkv1.GetInfoResponse{
 		Pubkey:                     info.PubKey,
-		RoundLifetime:              info.RoundLifetime,
+		VtxoTreeExpiry:             info.VtxoTreeExpiry,
 		UnilateralExitDelay:        info.UnilateralExitDelay,
 		RoundInterval:              info.RoundInterval,
 		Network:                    info.Network,
@@ -69,10 +72,10 @@ func (h *handler) GetInfo(
 		BoardingDescriptorTemplate: desc,
 		VtxoDescriptorTemplates:    []string{desc},
 		MarketHour: &arkv1.MarketHour{
-			NextStartTime: timestamppb.New(info.NextMarketHour.StartTime),
-			NextEndTime:   timestamppb.New(info.NextMarketHour.EndTime),
-			Period:        durationpb.New(info.NextMarketHour.Period),
-			RoundInterval: durationpb.New(info.NextMarketHour.RoundInterval),
+			NextStartTime: info.NextMarketHour.StartTime.Unix(),
+			NextEndTime:   info.NextMarketHour.EndTime.Unix(),
+			Period:        int64(info.NextMarketHour.Period),
+			RoundInterval: int64(info.NextMarketHour.RoundInterval),
 		},
 	}, nil
 }
@@ -148,13 +151,6 @@ func (h *handler) RegisterInputsForNextRound(
 		}
 	}
 
-	pubkey := req.GetEphemeralPubkey()
-	if len(pubkey) > 0 {
-		if err := h.svc.RegisterCosignerPubkey(ctx, requestID, pubkey); err != nil {
-			return nil, err
-		}
-	}
-
 	return &arkv1.RegisterInputsForNextRoundResponse{
 		RequestId: requestID,
 	}, nil
@@ -168,7 +164,20 @@ func (h *handler) RegisterOutputsForNextRound(
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if err := h.svc.ClaimVtxos(ctx, req.GetRequestId(), receivers); err != nil {
+	musig2Data := req.GetMusig2()
+	var musig2 *tree.Musig2
+	if musig2Data != nil {
+		signingType := tree.SignBranch
+		if musig2Data.SigningAll {
+			signingType = tree.SignAll
+		}
+		musig2 = &tree.Musig2{
+			CosignersPublicKeys: musig2Data.GetCosignersPublicKeys(),
+			SigningType:         signingType,
+		}
+	}
+
+	if err := h.svc.ClaimVtxos(ctx, req.GetRequestId(), receivers, musig2); err != nil {
 		return nil, err
 	}
 
@@ -317,7 +326,7 @@ func (h *handler) SubmitRedeemTx(
 		return nil, status.Error(codes.InvalidArgument, "missing redeem tx")
 	}
 
-	signedRedeemTx, err := h.svc.SubmitRedeemTx(
+	signedRedeemTx, redeemTxid, err := h.svc.SubmitRedeemTx(
 		ctx, req.GetRedeemTx(),
 	)
 	if err != nil {
@@ -326,6 +335,7 @@ func (h *handler) SubmitRedeemTx(
 
 	return &arkv1.SubmitRedeemTxResponse{
 		SignedRedeemTx: signedRedeemTx,
+		Txid:           redeemTxid,
 	}, nil
 }
 
@@ -519,19 +529,13 @@ func (h *handler) listenToEvents() {
 				},
 			}
 		case application.RoundSigningStarted:
-			cosignersKeys := make([]string, 0, len(e.Cosigners))
-			for _, key := range e.Cosigners {
-				keyStr := hex.EncodeToString(key.SerializeCompressed())
-				cosignersKeys = append(cosignersKeys, keyStr)
-			}
-
 			ev = &arkv1.GetEventStreamResponse{
 				Event: &arkv1.GetEventStreamResponse_RoundSigning{
 					RoundSigning: &arkv1.RoundSigningEvent{
 						Id:               e.Id,
-						CosignersPubkeys: cosignersKeys,
 						UnsignedVtxoTree: vtxoTree(e.UnsignedVtxoTree).toProto(),
 						UnsignedRoundTx:  e.UnsignedRoundTx,
+						CosignersPubkeys: e.CosignersPubkeys,
 					},
 				},
 			}

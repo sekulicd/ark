@@ -20,9 +20,14 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+type service struct {
+	arkv1.ArkServiceClient
+	arkv1.ExplorerServiceClient
+}
+
 type grpcClient struct {
 	conn      *grpc.ClientConn
-	svc       arkv1.ArkServiceClient
+	svc       service
 	treeCache *utils.Cache[tree.VtxoTree]
 }
 
@@ -31,8 +36,9 @@ func NewClient(serverUrl string) (client.TransportClient, error) {
 		return nil, fmt.Errorf("missing server url")
 	}
 
-	creds := insecure.NewCredentials()
 	port := 80
+	creds := insecure.NewCredentials()
+	serverUrl = strings.TrimPrefix(serverUrl, "http://")
 	if strings.HasPrefix(serverUrl, "https://") {
 		serverUrl = strings.TrimPrefix(serverUrl, "https://")
 		creds = credentials.NewTLS(nil)
@@ -50,7 +56,7 @@ func NewClient(serverUrl string) (client.TransportClient, error) {
 		return nil, err
 	}
 
-	svc := arkv1.NewArkServiceClient(conn)
+	svc := service{arkv1.NewArkServiceClient(conn), arkv1.NewExplorerServiceClient(conn)}
 	treeCache := utils.NewCache[tree.VtxoTree]()
 
 	return &grpcClient{conn, svc, treeCache}, nil
@@ -64,7 +70,7 @@ func (a *grpcClient) GetInfo(ctx context.Context) (*client.Info, error) {
 	}
 	return &client.Info{
 		PubKey:                     resp.GetPubkey(),
-		RoundLifetime:              resp.GetRoundLifetime(),
+		VtxoTreeExpiry:             resp.GetVtxoTreeExpiry(),
 		UnilateralExitDelay:        resp.GetUnilateralExitDelay(),
 		RoundInterval:              resp.GetRoundInterval(),
 		Network:                    resp.GetNetwork(),
@@ -88,13 +94,10 @@ func (a *grpcClient) GetBoardingAddress(
 }
 
 func (a *grpcClient) RegisterInputsForNextRound(
-	ctx context.Context, inputs []client.Input, ephemeralPubkey string,
+	ctx context.Context, inputs []client.Input,
 ) (string, error) {
 	req := &arkv1.RegisterInputsForNextRoundRequest{
 		Inputs: ins(inputs).toProto(),
-	}
-	if len(ephemeralPubkey) > 0 {
-		req.EphemeralPubkey = &ephemeralPubkey
 	}
 
 	resp, err := a.svc.RegisterInputsForNextRound(ctx, req)
@@ -105,13 +108,10 @@ func (a *grpcClient) RegisterInputsForNextRound(
 }
 
 func (a *grpcClient) RegisterNotesForNextRound(
-	ctx context.Context, notes []string, ephemeralKey string,
+	ctx context.Context, notes []string,
 ) (string, error) {
 	req := &arkv1.RegisterInputsForNextRoundRequest{
 		Notes: notes,
-	}
-	if len(ephemeralKey) > 0 {
-		req.EphemeralPubkey = &ephemeralKey
 	}
 	resp, err := a.svc.RegisterInputsForNextRound(ctx, req)
 	if err != nil {
@@ -121,11 +121,17 @@ func (a *grpcClient) RegisterNotesForNextRound(
 }
 
 func (a *grpcClient) RegisterOutputsForNextRound(
-	ctx context.Context, requestID string, outputs []client.Output,
+	ctx context.Context, requestID string, outputs []client.Output, musig2 *tree.Musig2,
 ) error {
 	req := &arkv1.RegisterOutputsForNextRoundRequest{
 		RequestId: requestID,
 		Outputs:   outs(outputs).toProto(),
+	}
+	if musig2 != nil {
+		req.Musig2 = &arkv1.Musig2{
+			CosignersPublicKeys: musig2.CosignersPublicKeys,
+			SigningAll:          musig2.SigningType == tree.SignAll,
+		}
 	}
 	_, err := a.svc.RegisterOutputsForNextRound(ctx, req)
 	return err
@@ -251,17 +257,17 @@ func (a *grpcClient) Ping(
 
 func (a *grpcClient) SubmitRedeemTx(
 	ctx context.Context, redeemTx string,
-) (string, error) {
+) (string, string, error) {
 	req := &arkv1.SubmitRedeemTxRequest{
 		RedeemTx: redeemTx,
 	}
 
 	resp, err := a.svc.SubmitRedeemTx(ctx, req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return resp.GetSignedRedeemTx(), nil
+	return resp.GetSignedRedeemTx(), resp.GetTxid(), nil
 }
 
 func (a *grpcClient) GetRound(

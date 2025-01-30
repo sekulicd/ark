@@ -25,13 +25,13 @@ type RoundEvent interface {
 type TransportClient interface {
 	GetInfo(ctx context.Context) (*Info, error)
 	RegisterInputsForNextRound(
-		ctx context.Context, inputs []Input, ephemeralKey string,
+		ctx context.Context, inputs []Input,
 	) (string, error)
 	RegisterNotesForNextRound(
-		ctx context.Context, notes []string, ephemeralKey string,
+		ctx context.Context, notes []string,
 	) (string, error)
 	RegisterOutputsForNextRound(
-		ctx context.Context, requestID string, outputs []Output,
+		ctx context.Context, requestID string, outputs []Output, musig2 *tree.Musig2,
 	) error
 	SubmitTreeNonces(
 		ctx context.Context, roundID, cosignerPubkey string, nonces bitcointree.TreeNonces,
@@ -47,8 +47,8 @@ type TransportClient interface {
 	) (<-chan RoundEventChannel, func(), error)
 	Ping(ctx context.Context, requestID string) error
 	SubmitRedeemTx(
-		ctx context.Context, signedRedeemTx string,
-	) (string, error)
+		ctx context.Context, partialSignedRedeemTx string,
+	) (signedRedeemTx, redeemTxid string, err error)
 	ListVtxos(ctx context.Context, addr string) ([]Vtxo, []Vtxo, error)
 	GetRound(ctx context.Context, txID string) (*Round, error)
 	GetRoundByID(ctx context.Context, roundID string) (*Round, error)
@@ -60,7 +60,7 @@ type TransportClient interface {
 
 type Info struct {
 	PubKey                     string
-	RoundLifetime              int64
+	VtxoTreeExpiry             int64
 	UnilateralExitDelay        int64
 	RoundInterval              int64
 	Network                    string
@@ -193,8 +193,8 @@ func (e RoundFailedEvent) isRoundEvent() {}
 type RoundSigningStartedEvent struct {
 	ID               string
 	UnsignedTree     tree.VtxoTree
-	CosignersPubKeys []*secp256k1.PublicKey
 	UnsignedRoundTx  string
+	CosignersPubkeys []string
 }
 
 func (e RoundSigningStartedEvent) isRoundEvent() {}

@@ -47,8 +47,10 @@ var (
 		common.LiquidRegTest.Name:  "http://localhost:3001",
 		common.Bitcoin.Name:        "https://blockstream.info/api",
 		common.BitcoinTestNet.Name: "https://blockstream.info/testnet/api",
-		common.BitcoinRegTest.Name: "http://localhost:3000",
-		common.BitcoinSigNet.Name:  "https://mutinynet.com/api",
+		//common.BitcoinTestNet4.Name: "https://mempool.space/testnet4/api", //TODO uncomment once supported
+		common.BitcoinSigNet.Name:    "https://blockstream.info/signet/api",
+		common.BitcoinMutinyNet.Name: "https://mutinynet.com/api",
+		common.BitcoinRegTest.Name:   "http://localhost:3000",
 	}
 )
 
@@ -101,6 +103,10 @@ func (a *arkClient) GetTransactionEventChannel() chan types.TransactionEvent {
 	return a.store.TransactionStore().GetEventChannel()
 }
 
+func (a *arkClient) SignTransaction(ctx context.Context, tx string) (string, error) {
+	return a.wallet.SignTransaction(ctx, a.explorer, tx)
+}
+
 func (a *arkClient) Stop() error {
 	if a.Config.WithTransactionFeed {
 		a.txStreamCtxCancel()
@@ -146,9 +152,9 @@ func (a *arkClient) initWithWallet(
 		return fmt.Errorf("failed to parse server pubkey: %s", err)
 	}
 
-	lifetimeType := common.LocktimeTypeBlock
-	if info.RoundLifetime >= 512 {
-		lifetimeType = common.LocktimeTypeSecond
+	vtxoTreeExpiryType := common.LocktimeTypeBlock
+	if info.VtxoTreeExpiry >= 512 {
+		vtxoTreeExpiryType = common.LocktimeTypeSecond
 	}
 
 	unilateralExitDelayType := common.LocktimeTypeBlock
@@ -162,9 +168,9 @@ func (a *arkClient) initWithWallet(
 		WalletType:                 args.Wallet.GetType(),
 		ClientType:                 args.ClientType,
 		Network:                    network,
-		RoundLifetime:              common.Locktime{Type: lifetimeType, Value: uint32(info.RoundLifetime)},
+		VtxoTreeExpiry:             common.RelativeLocktime{Type: vtxoTreeExpiryType, Value: uint32(info.VtxoTreeExpiry)},
 		RoundInterval:              info.RoundInterval,
-		UnilateralExitDelay:        common.Locktime{Type: unilateralExitDelayType, Value: uint32(info.UnilateralExitDelay)},
+		UnilateralExitDelay:        common.RelativeLocktime{Type: unilateralExitDelayType, Value: uint32(info.UnilateralExitDelay)},
 		Dust:                       info.Dust,
 		BoardingDescriptorTemplate: info.BoardingDescriptorTemplate,
 		ForfeitAddress:             info.ForfeitAddress,
@@ -223,9 +229,9 @@ func (a *arkClient) init(
 		return fmt.Errorf("failed to parse server pubkey: %s", err)
 	}
 
-	lifetimeType := common.LocktimeTypeBlock
-	if info.RoundLifetime >= 512 {
-		lifetimeType = common.LocktimeTypeSecond
+	vtxoTreeExpiryType := common.LocktimeTypeBlock
+	if info.VtxoTreeExpiry >= 512 {
+		vtxoTreeExpiryType = common.LocktimeTypeSecond
 	}
 
 	unilateralExitDelayType := common.LocktimeTypeBlock
@@ -239,9 +245,9 @@ func (a *arkClient) init(
 		WalletType:                 args.WalletType,
 		ClientType:                 args.ClientType,
 		Network:                    network,
-		RoundLifetime:              common.Locktime{Type: lifetimeType, Value: uint32(info.RoundLifetime)},
+		VtxoTreeExpiry:             common.RelativeLocktime{Type: vtxoTreeExpiryType, Value: uint32(info.VtxoTreeExpiry)},
 		RoundInterval:              info.RoundInterval,
-		UnilateralExitDelay:        common.Locktime{Type: unilateralExitDelayType, Value: uint32(info.UnilateralExitDelay)},
+		UnilateralExitDelay:        common.RelativeLocktime{Type: unilateralExitDelayType, Value: uint32(info.UnilateralExitDelay)},
 		Dust:                       info.Dust,
 		BoardingDescriptorTemplate: info.BoardingDescriptorTemplate,
 		ExplorerURL:                args.ExplorerURL,
@@ -367,8 +373,8 @@ func getWalletStore(storeType, datadir string) (walletstore.WalletStore, error) 
 	}
 }
 
-func getCreatedAtFromExpiry(roundLifetime common.Locktime, expiry time.Time) time.Time {
-	return expiry.Add(-time.Duration(roundLifetime.Seconds()) * time.Second)
+func getCreatedAtFromExpiry(vtxoTreeExpiry common.RelativeLocktime, expiry time.Time) time.Time {
+	return expiry.Add(-time.Duration(vtxoTreeExpiry.Seconds()) * time.Second)
 }
 
 func filterByOutpoints(vtxos []client.Vtxo, outpoints []client.Outpoint) []client.Vtxo {

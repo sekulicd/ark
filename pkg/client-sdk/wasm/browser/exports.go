@@ -19,6 +19,7 @@ import (
 var (
 	arkSdkClient arksdk.ArkClient
 	store        types.Store
+	version      string
 )
 
 func init() {
@@ -39,15 +40,17 @@ func init() {
 	js.Global().Set("redeemNotes", RedeemNotesWrapper())
 	js.Global().Set("setNostrNotificationRecipient", SetNostrNotificationRecipientWrapper())
 	js.Global().Set("listVtxos", ListVtxosWrapper())
+	js.Global().Set("signTransaction", SignTransactionWrapper())
 
 	js.Global().Set("getServerUrl", GetServerUrlWrapper())
 	js.Global().Set("getServerPubkeyHex", GetServerPubkeyWrapper())
 	js.Global().Set("getWalletType", GetWalletTypeWrapper())
 	js.Global().Set("getClientType", GetClientTypeWrapper())
 	js.Global().Set("getNetwork", GetNetworkWrapper())
-	js.Global().Set("getRoundLifetime", GetRoundLifetimeWrapper())
+	js.Global().Set("getVtxoTreeExpiry", GetVtxoTreeExpiryWrapper())
 	js.Global().Set("getUnilateralExitDelay", GetUnilateralExitDelayWrapper())
 	js.Global().Set("getDust", GetDustWrapper())
+	js.Global().Set("getVersion", GetVersionWrapper())
 }
 
 func NewCovenantClient(
@@ -86,7 +89,7 @@ func NewCovenantClient(
 }
 
 func NewCovenantlessClient(
-	ctx context.Context, storeSvc types.Store,
+	ctx context.Context, storeSvc types.Store, v string,
 ) error {
 	var err error
 
@@ -116,6 +119,7 @@ func NewCovenantlessClient(
 		return err
 	}
 	store = storeSvc
+	version = v
 
 	select {}
 }

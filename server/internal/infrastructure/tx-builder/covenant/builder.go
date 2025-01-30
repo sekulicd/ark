@@ -15,6 +15,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/vulpemventures/go-elements/address"
@@ -28,17 +29,17 @@ import (
 type txBuilder struct {
 	wallet            ports.WalletService
 	net               common.Network
-	roundLifetime     common.Locktime
-	boardingExitDelay common.Locktime
+	vtxoTreeExpiry    common.RelativeLocktime
+	boardingExitDelay common.RelativeLocktime
 }
 
 func NewTxBuilder(
 	wallet ports.WalletService,
 	net common.Network,
-	roundLifetime common.Locktime,
-	boardingExitDelay common.Locktime,
+	vtxoTreeExpiry common.RelativeLocktime,
+	boardingExitDelay common.RelativeLocktime,
 ) ports.TxBuilder {
-	return &txBuilder{wallet, net, roundLifetime, boardingExitDelay}
+	return &txBuilder{wallet, net, vtxoTreeExpiry, boardingExitDelay}
 }
 
 func (b *txBuilder) GetTxID(tx string) (string, error) {
@@ -206,6 +207,14 @@ func (b *txBuilder) VerifyForfeitTxs(vtxos []domain.Vtxo, connectors []string, f
 		}
 
 		vtxoTapscript := firstForfeit.Inputs[1].TapLeafScript[0]
+		conditionWitness, err := tree.GetConditionWitness(firstForfeit.Inputs[1])
+		if err != nil {
+			return nil, err
+		}
+		conditionWitnessSize := 0
+		for _, witness := range conditionWitness {
+			conditionWitnessSize += len(witness)
+		}
 
 		// verify the forfeit closure script
 		closure, err := tree.DecodeClosure(vtxoTapscript.Script)
@@ -213,21 +222,26 @@ func (b *txBuilder) VerifyForfeitTxs(vtxos []domain.Vtxo, connectors []string, f
 			return nil, err
 		}
 
+		var locktime *common.AbsoluteLocktime
+
 		switch c := closure.(type) {
 		case *tree.CLTVMultisigClosure:
-			switch c.Locktime.Type {
-			case common.LocktimeTypeBlock:
-				if c.Locktime.Value > blocktimestamp.Height {
-					return nil, fmt.Errorf("forfeit closure is CLTV locked, %d > %d (block height)", c.Locktime.Value, blocktimestamp.Height)
-				}
-			case common.LocktimeTypeSecond:
-				if c.Locktime.Value > uint32(blocktimestamp.Time) {
-					return nil, fmt.Errorf("forfeit closure is CLTV locked, %d > %d (block time)", c.Locktime.Value, blocktimestamp.Time)
-				}
-			}
-		case *tree.MultisigClosure:
+			locktime = &c.Locktime
+		case *tree.MultisigClosure, *tree.ConditionMultisigClosure:
 		default:
 			return nil, fmt.Errorf("invalid forfeit closure script")
+		}
+
+		if locktime != nil {
+			if !locktime.IsSeconds() {
+				if *locktime > common.AbsoluteLocktime(blocktimestamp.Time) {
+					return nil, fmt.Errorf("forfeit closure is CLTV locked, %d > %d (block time)", *locktime, blocktimestamp.Time)
+				}
+			} else {
+				if *locktime > common.AbsoluteLocktime(blocktimestamp.Height) {
+					return nil, fmt.Errorf("forfeit closure is CLTV locked, %d > %d (block height)", *locktime, blocktimestamp.Height)
+				}
+			}
 		}
 
 		minFee, err := common.ComputeForfeitTxFee(
@@ -236,7 +250,7 @@ func (b *txBuilder) VerifyForfeitTxs(vtxos []domain.Vtxo, connectors []string, f
 				RevealedScript: vtxoTapscript.Script,
 				ControlBlock:   &vtxoTapscript.ControlBlock.ControlBlock,
 			},
-			closure.WitnessSize(),
+			closure.WitnessSize(conditionWitnessSize),
 			txscript.GetScriptClass(forfeitScript),
 		)
 		if err != nil {
@@ -265,6 +279,11 @@ func (b *txBuilder) VerifyForfeitTxs(vtxos []domain.Vtxo, connectors []string, f
 		vtxoInput := psetv2.InputArgs{
 			Txid:    vtxoKey.Txid,
 			TxIndex: vtxoKey.VOut,
+		}
+
+		if locktime != nil {
+			vtxoInput.TimeLock = uint32(*locktime)
+			vtxoInput.Sequence = wire.MaxTxInSequenceNum - 1
 		}
 
 		vtxoTapKey, err := vtxo.TapKey()
@@ -346,9 +365,9 @@ func (b *txBuilder) BuildRoundTx(
 	serverPubkey *secp256k1.PublicKey,
 	requests []domain.TxRequest,
 	boardingInputs []ports.BoardingInput,
-	sweptRounds []domain.Round,
-	_ ...*secp256k1.PublicKey, // cosigners are not used in the covenant
-) (roundTx string, vtxoTree tree.VtxoTree, connectorAddress string, connectors []string, err error) {
+	connectorAddresses []string,
+	_ []*tree.Musig2,
+) (roundTx string, vtxoTree tree.VtxoTree, nextConnectorAddress string, connectors []string, err error) {
 	// The creation of the tree and the round tx are tightly coupled:
 	// - building the tree requires knowing the shared outpoint (txid:vout)
 	// - building the round tx requires knowing the shared output script and amount
@@ -377,20 +396,21 @@ func (b *txBuilder) BuildRoundTx(
 		}
 
 		treeFactoryFn, sharedOutputScript, sharedOutputAmount, err = tree.BuildVtxoTree(
-			b.onchainNetwork().AssetID, serverPubkey, vtxosLeaves, feeSatsPerNode, b.roundLifetime,
+			b.onchainNetwork().AssetID, serverPubkey, vtxosLeaves, feeSatsPerNode, b.vtxoTreeExpiry,
 		)
 		if err != nil {
 			return "", nil, "", nil, err
 		}
 	}
 
-	connectorAddress, err = b.wallet.DeriveConnectorAddress(context.Background())
+	nextConnectorAddress, err = b.wallet.DeriveConnectorAddress(context.Background())
 	if err != nil {
 		return
 	}
 
 	ptx, err := b.createRoundTx(
-		sharedOutputAmount, sharedOutputScript, requests, boardingInputs, serverPubkey, connectorAddress, sweptRounds,
+		sharedOutputAmount, sharedOutputScript, requests, boardingInputs,
+		serverPubkey, nextConnectorAddress, connectorAddresses,
 	)
 	if err != nil {
 		return
@@ -430,7 +450,7 @@ func (b *txBuilder) BuildRoundTx(
 		return "", nil, "", nil, err
 	}
 
-	connectorsPsets, err := b.createConnectors(roundTx, requests, connectorAddress, connectorAmount, connectorFeeAmount)
+	connectorsPsets, err := b.createConnectors(roundTx, requests, nextConnectorAddress, connectorAmount, connectorFeeAmount)
 	if err != nil {
 		return "", nil, "", nil, err
 	}
@@ -446,7 +466,7 @@ func (b *txBuilder) BuildRoundTx(
 	return
 }
 
-func (b *txBuilder) GetSweepInput(node tree.Node) (lifetime *common.Locktime, sweepInput ports.SweepInput, err error) {
+func (b *txBuilder) GetSweepInput(node tree.Node) (vtxoTreeExpiry *common.RelativeLocktime, sweepInput ports.SweepInput, err error) {
 	pset, err := psetv2.NewPsetFromBase64(node.Tx)
 	if err != nil {
 		return nil, nil, err
@@ -461,7 +481,7 @@ func (b *txBuilder) GetSweepInput(node tree.Node) (lifetime *common.Locktime, sw
 	txid := chainhash.Hash(input.PreviousTxid).String()
 	index := input.PreviousTxIndex
 
-	sweepLeaf, lifetime, err := extractSweepLeaf(input)
+	sweepLeaf, vtxoTreeExpiry, err := extractSweepLeaf(input)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -490,7 +510,7 @@ func (b *txBuilder) GetSweepInput(node tree.Node) (lifetime *common.Locktime, sw
 		amount:    inputValue,
 	}
 
-	return lifetime, sweepInput, nil
+	return vtxoTreeExpiry, sweepInput, nil
 }
 func (b *txBuilder) VerifyTapscriptPartialSigs(tx string) (bool, error) {
 	pset, err := psetv2.NewPsetFromBase64(tx)
@@ -533,11 +553,29 @@ func (b *txBuilder) verifyTapscriptPartialSigs(pset *psetv2.Pset) (bool, error) 
 			for _, key := range c.PubKeys {
 				keys[hex.EncodeToString(schnorr.SerializePubKey(key))] = false
 			}
-		case *tree.CSVSigClosure:
+		case *tree.CSVMultisigClosure:
 			for _, key := range c.PubKeys {
 				keys[hex.EncodeToString(schnorr.SerializePubKey(key))] = false
 			}
 		case *tree.CLTVMultisigClosure:
+			for _, key := range c.PubKeys {
+				keys[hex.EncodeToString(schnorr.SerializePubKey(key))] = false
+			}
+		case *tree.ConditionMultisigClosure:
+			witness, err := tree.GetConditionWitness(input)
+			if err != nil {
+				return false, err
+			}
+
+			result, err := tree.ExecuteBoolScript(c.Condition, witness)
+			if err != nil {
+				return false, err
+			}
+
+			if !result {
+				return false, fmt.Errorf("condition not met for input %d", index)
+			}
+
 			for _, key := range c.PubKeys {
 				keys[hex.EncodeToString(schnorr.SerializePubKey(key))] = false
 			}
@@ -621,10 +659,22 @@ func (b *txBuilder) FinalizeAndExtract(tx string) (string, error) {
 				return "", err
 			}
 
-			signatures := make(map[string][]byte)
+			conditionWitness, err := tree.GetConditionWitness(in)
+			if err != nil {
+				return "", err
+			}
+
+			args := make(map[string][]byte)
+			if len(conditionWitness) > 0 {
+				var conditionWitnessBytes bytes.Buffer
+				if err := psbt.WriteTxWitness(&conditionWitnessBytes, conditionWitness); err != nil {
+					return "", err
+				}
+				args[tree.ConditionWitnessKey] = conditionWitnessBytes.Bytes()
+			}
 
 			for _, sig := range in.TapScriptSig {
-				signatures[hex.EncodeToString(sig.PubKey)] = sig.Signature
+				args[hex.EncodeToString(sig.PubKey)] = sig.Signature
 			}
 
 			controlBlock, err := tapLeaf.ControlBlock.ToBytes()
@@ -632,7 +682,7 @@ func (b *txBuilder) FinalizeAndExtract(tx string) (string, error) {
 				return "", err
 			}
 
-			witness, err := closure.Witness(controlBlock, signatures)
+			witness, err := closure.Witness(controlBlock, args)
 			if err != nil {
 				return "", err
 			}
@@ -707,15 +757,15 @@ func (b *txBuilder) createRoundTx(
 	requests []domain.TxRequest,
 	boardingInputs []ports.BoardingInput,
 	serverPubkey *secp256k1.PublicKey,
-	connectorAddress string,
-	sweptRounds []domain.Round,
+	nextConnectorAddress string,
+	connectorAddresses []string,
 ) (*psetv2.Pset, error) {
 	serverScript, err := p2wpkhScript(serverPubkey, b.onchainNetwork())
 	if err != nil {
 		return nil, err
 	}
 
-	connectorScript, err := address.ToOutputScript(connectorAddress)
+	nextConnectorScript, err := address.ToOutputScript(nextConnectorAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -753,7 +803,7 @@ func (b *txBuilder) createRoundTx(
 		outputs = append(outputs, psetv2.OutputArgs{
 			Asset:  b.onchainNetwork().AssetID,
 			Amount: connectorsAmount,
-			Script: connectorScript,
+			Script: nextConnectorScript,
 		})
 	}
 
@@ -778,7 +828,7 @@ func (b *txBuilder) createRoundTx(
 		return nil, err
 	}
 
-	utxos, change, err := b.selectUtxos(ctx, sweptRounds, targetAmount)
+	utxos, change, err := b.selectUtxos(ctx, connectorAddresses, targetAmount)
 	if err != nil {
 		return nil, err
 	}
@@ -897,7 +947,7 @@ func (b *txBuilder) createRoundTx(
 				ptx.Outputs = ptx.Outputs[:len(ptx.Outputs)-1]
 				ptx.Global.OutputCount--
 			}
-			newUtxos, change, err := b.selectUtxos(ctx, sweptRounds, feeAmount-change)
+			newUtxos, change, err := b.selectUtxos(ctx, connectorAddresses, feeAmount-change)
 			if err != nil {
 				return nil, err
 			}
@@ -923,7 +973,7 @@ func (b *txBuilder) createRoundTx(
 			}
 		}
 	} else if feeAmount-dust > 0 {
-		newUtxos, change, err := b.selectUtxos(ctx, sweptRounds, feeAmount-dust)
+		newUtxos, change, err := b.selectUtxos(ctx, connectorAddresses, feeAmount-dust)
 		if err != nil {
 			return nil, err
 		}
@@ -1155,16 +1205,16 @@ func (b *txBuilder) onchainNetwork() *network.Network {
 	}
 }
 
-func extractSweepLeaf(input psetv2.Input) (sweepLeaf *psetv2.TapLeafScript, lifetime *common.Locktime, err error) {
+func extractSweepLeaf(input psetv2.Input) (sweepLeaf *psetv2.TapLeafScript, vtxoTreeExpiry *common.RelativeLocktime, err error) {
 	for _, leaf := range input.TapLeafScript {
-		closure := &tree.CSVSigClosure{}
+		closure := &tree.CSVMultisigClosure{}
 		valid, err := closure.Decode(leaf.Script)
 		if err != nil {
 			return nil, nil, err
 		}
-		if valid && (lifetime == nil || lifetime.LessThan(closure.Locktime)) {
+		if valid && (vtxoTreeExpiry == nil || vtxoTreeExpiry.LessThan(closure.Locktime)) {
 			sweepLeaf = &leaf
-			lifetime = &closure.Locktime
+			vtxoTreeExpiry = &closure.Locktime
 		}
 	}
 

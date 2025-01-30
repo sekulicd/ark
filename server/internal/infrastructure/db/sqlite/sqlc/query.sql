@@ -79,30 +79,12 @@ FROM round
          LEFT OUTER JOIN request_vtxo_vw ON round_request_vw.id=request_vtxo_vw.request_id
 WHERE round.txid = ?;
 
--- name: SelectSweepableRounds :many
-SELECT sqlc.embed(round),
-       sqlc.embed(round_request_vw),
-       sqlc.embed(round_tx_vw),
-       sqlc.embed(request_receiver_vw),
-       sqlc.embed(request_vtxo_vw)
-FROM round
-         LEFT OUTER JOIN round_request_vw ON round.id=round_request_vw.round_id
-         LEFT OUTER JOIN round_tx_vw ON round.id=round_tx_vw.round_id
-         LEFT OUTER JOIN request_receiver_vw ON round_request_vw.id=request_receiver_vw.request_id
-         LEFT OUTER JOIN request_vtxo_vw ON round_request_vw.id=request_vtxo_vw.request_id
+-- name: SelectExpiredRoundsTxid :many
+SELECT round.txid FROM round
 WHERE round.swept = false AND round.ended = true AND round.failed = false;
 
--- name: SelectSweptRounds :many
-SELECT sqlc.embed(round),
-       sqlc.embed(round_request_vw),
-       sqlc.embed(round_tx_vw),
-       sqlc.embed(request_receiver_vw),
-       sqlc.embed(request_vtxo_vw)
-FROM round
-         LEFT OUTER JOIN round_request_vw ON round.id=round_request_vw.round_id
-         LEFT OUTER JOIN round_tx_vw ON round.id=round_tx_vw.round_id
-         LEFT OUTER JOIN request_receiver_vw ON round_request_vw.id=request_receiver_vw.request_id
-         LEFT OUTER JOIN request_vtxo_vw ON round_request_vw.id=request_vtxo_vw.request_id
+-- name: SelectSweptRoundsConnectorAddress :many
+SELECT round.connector_address FROM round
 WHERE round.swept = true AND round.failed = false AND round.ended = true AND round.connector_address <> '';
 
 -- name: SelectRoundIdsInRange :many
@@ -208,3 +190,8 @@ RETURNING *;
 
 -- name: GetLatestMarketHour :one
 SELECT * FROM market_hour ORDER BY updated_at DESC LIMIT 1;
+
+-- name: SelectTreeTxsWithRoundTxid :many
+SELECT tx.* FROM round
+LEFT OUTER JOIN tx ON round.id=tx.round_id
+WHERE round.txid = ? AND tx.type = 'tree'

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/ark-network/ark/common/tree"
 	"github.com/ark-network/ark/server/internal/core/domain"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/timshannon/badgerhold/v4"
@@ -80,18 +81,38 @@ func (r *roundRepository) GetRoundWithTxid(
 	return round, nil
 }
 
-func (r *roundRepository) GetSweepableRounds(
+func (r *roundRepository) GetExpiredRoundsTxid(
 	ctx context.Context,
-) ([]domain.Round, error) {
+) ([]string, error) {
 	query := badgerhold.Where("Stage.Code").Eq(domain.FinalizationStage).
 		And("Stage.Ended").Eq(true).And("Swept").Eq(false)
-	return r.findRound(ctx, query)
+	rounds, err := r.findRound(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	txids := make([]string, 0, len(rounds))
+	for _, r := range rounds {
+		txids = append(txids, r.Txid)
+	}
+	return txids, nil
 }
 
-func (r *roundRepository) GetSweptRounds(ctx context.Context) ([]domain.Round, error) {
+func (r *roundRepository) GetSweptRoundsConnectorAddress(
+	ctx context.Context,
+) ([]string, error) {
 	query := badgerhold.Where("Stage.Code").Eq(domain.FinalizationStage).
 		And("Stage.Ended").Eq(true).And("Swept").Eq(true).And("ConnectorAddress").Ne("")
-	return r.findRound(ctx, query)
+	rounds, err := r.findRound(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	txids := make([]string, 0, len(rounds))
+	for _, r := range rounds {
+		txids = append(txids, r.Txid)
+	}
+	return txids, nil
 }
 
 func (r *roundRepository) GetRoundsIds(ctx context.Context, startedAfter int64, startedBefore int64) ([]string, error) {
@@ -116,6 +137,16 @@ func (r *roundRepository) GetRoundsIds(ctx context.Context, startedAfter int64, 
 	}
 
 	return ids, nil
+}
+
+func (r *roundRepository) GetVtxoTreeWithTxid(
+	ctx context.Context, txid string,
+) (tree.VtxoTree, error) {
+	round, err := r.GetRoundWithTxid(ctx, txid)
+	if err != nil {
+		return nil, err
+	}
+	return round.VtxoTree, nil
 }
 
 func (r *roundRepository) Close() {

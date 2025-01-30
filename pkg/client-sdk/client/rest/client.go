@@ -19,9 +19,10 @@ import (
 	"github.com/ark-network/ark/pkg/client-sdk/client"
 	"github.com/ark-network/ark/pkg/client-sdk/client/rest/service/arkservice"
 	"github.com/ark-network/ark/pkg/client-sdk/client/rest/service/arkservice/ark_service"
+	"github.com/ark-network/ark/pkg/client-sdk/client/rest/service/explorerservice"
+	"github.com/ark-network/ark/pkg/client-sdk/client/rest/service/explorerservice/explorer_service"
 	"github.com/ark-network/ark/pkg/client-sdk/client/rest/service/models"
 	"github.com/ark-network/ark/pkg/client-sdk/internal/utils"
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	httptransport "github.com/go-openapi/runtime/client"
 	"github.com/go-openapi/strfmt"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
@@ -31,6 +32,7 @@ import (
 type restClient struct {
 	serverURL      string
 	svc            ark_service.ClientService
+	explorerSvc    explorer_service.ClientService
 	requestTimeout time.Duration
 	treeCache      *utils.Cache[tree.VtxoTree]
 }
@@ -39,7 +41,11 @@ func NewClient(serverURL string) (client.TransportClient, error) {
 	if len(serverURL) <= 0 {
 		return nil, fmt.Errorf("missing server url")
 	}
-	svc, err := newRestClient(serverURL)
+	svc, err := newRestArkClient(serverURL)
+	if err != nil {
+		return nil, err
+	}
+	explorerSvc, err := newRestExplorerClient(serverURL)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +53,7 @@ func NewClient(serverURL string) (client.TransportClient, error) {
 	reqTimeout := 15 * time.Second
 	treeCache := utils.NewCache[tree.VtxoTree]()
 
-	return &restClient{serverURL, svc, reqTimeout, treeCache}, nil
+	return &restClient{serverURL, svc, explorerSvc, reqTimeout, treeCache}, nil
 }
 
 func (a *restClient) GetInfo(
@@ -58,7 +64,7 @@ func (a *restClient) GetInfo(
 		return nil, err
 	}
 
-	roundLifetime, err := strconv.Atoi(resp.Payload.RoundLifetime)
+	vtxoTreeExpiry, err := strconv.Atoi(resp.Payload.VtxoTreeExpiry)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +86,7 @@ func (a *restClient) GetInfo(
 
 	return &client.Info{
 		PubKey:                     resp.Payload.Pubkey,
-		RoundLifetime:              int64(roundLifetime),
+		VtxoTreeExpiry:             int64(vtxoTreeExpiry),
 		UnilateralExitDelay:        int64(unilateralExitDelay),
 		RoundInterval:              int64(roundInterval),
 		Network:                    resp.Payload.Network,
@@ -108,7 +114,7 @@ func (a *restClient) GetBoardingAddress(
 }
 
 func (a *restClient) RegisterInputsForNextRound(
-	ctx context.Context, inputs []client.Input, ephemeralPubkey string,
+	ctx context.Context, inputs []client.Input,
 ) (string, error) {
 	ins := make([]*models.V1Input, 0, len(inputs))
 	for _, i := range inputs {
@@ -125,10 +131,6 @@ func (a *restClient) RegisterInputsForNextRound(
 	body := &models.V1RegisterInputsForNextRoundRequest{
 		Inputs: ins,
 	}
-	if len(ephemeralPubkey) > 0 {
-		body.EphemeralPubkey = ephemeralPubkey
-	}
-
 	resp, err := a.svc.ArkServiceRegisterInputsForNextRound(
 		ark_service.NewArkServiceRegisterInputsForNextRoundParams().WithBody(body),
 	)
@@ -140,13 +142,10 @@ func (a *restClient) RegisterInputsForNextRound(
 }
 
 func (a *restClient) RegisterNotesForNextRound(
-	ctx context.Context, notes []string, ephemeralKey string,
+	ctx context.Context, notes []string,
 ) (string, error) {
 	body := &models.V1RegisterInputsForNextRoundRequest{
 		Notes: notes,
-	}
-	if len(ephemeralKey) > 0 {
-		body.EphemeralPubkey = ephemeralKey
 	}
 	resp, err := a.svc.ArkServiceRegisterInputsForNextRound(
 		ark_service.NewArkServiceRegisterInputsForNextRoundParams().WithBody(body),
@@ -158,7 +157,7 @@ func (a *restClient) RegisterNotesForNextRound(
 }
 
 func (a *restClient) RegisterOutputsForNextRound(
-	ctx context.Context, requestID string, outputs []client.Output,
+	ctx context.Context, requestID string, outputs []client.Output, musig2 *tree.Musig2,
 ) error {
 	outs := make([]*models.V1Output, 0, len(outputs))
 	for _, o := range outputs {
@@ -171,7 +170,12 @@ func (a *restClient) RegisterOutputsForNextRound(
 		RequestID: requestID,
 		Outputs:   outs,
 	}
-
+	if musig2 != nil {
+		body.Musig2 = &models.V1Musig2{
+			CosignersPublicKeys: musig2.CosignersPublicKeys,
+			SigningAll:          musig2.SigningType == tree.SignAll,
+		}
+	}
 	_, err := a.svc.ArkServiceRegisterOutputsForNextRound(
 		ark_service.NewArkServiceRegisterOutputsForNextRoundParams().WithBody(&body),
 	)
@@ -338,26 +342,11 @@ func (c *restClient) GetEventStream(
 				}
 			case resp.Result.RoundSigning != nil:
 				e := resp.Result.RoundSigning
-				pubkeys := make([]*secp256k1.PublicKey, 0, len(e.CosignersPubkeys))
-				for _, pubkey := range e.CosignersPubkeys {
-					p, err := hex.DecodeString(pubkey)
-					if err != nil {
-						_err = err
-						break
-					}
-					pk, err := secp256k1.ParsePubKey(p)
-					if err != nil {
-						_err = err
-						break
-					}
-					pubkeys = append(pubkeys, pk)
-				}
-
 				event = client.RoundSigningStartedEvent{
 					ID:               e.ID,
 					UnsignedTree:     treeFromProto{e.UnsignedVtxoTree}.parse(),
-					CosignersPubKeys: pubkeys,
 					UnsignedRoundTx:  e.UnsignedRoundTx,
+					CosignersPubkeys: e.CosignersPubkeys,
 				}
 			case resp.Result.RoundSigningNoncesGenerated != nil:
 				e := resp.Result.RoundSigningNoncesGenerated
@@ -394,7 +383,7 @@ func (a *restClient) Ping(
 
 func (a *restClient) SubmitRedeemTx(
 	ctx context.Context, redeemTx string,
-) (string, error) {
+) (string, string, error) {
 	req := &models.V1SubmitRedeemTxRequest{
 		RedeemTx: redeemTx,
 	}
@@ -402,16 +391,16 @@ func (a *restClient) SubmitRedeemTx(
 		ark_service.NewArkServiceSubmitRedeemTxParams().WithBody(req),
 	)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return resp.Payload.SignedRedeemTx, nil
+	return resp.Payload.SignedRedeemTx, resp.Payload.Txid, nil
 }
 
 func (a *restClient) GetRound(
 	ctx context.Context, txID string,
 ) (*client.Round, error) {
-	resp, err := a.svc.ArkServiceGetRound(
-		ark_service.NewArkServiceGetRoundParams().WithTxid(txID),
+	resp, err := a.explorerSvc.ExplorerServiceGetRound(
+		explorer_service.NewExplorerServiceGetRoundParams().WithTxid(txID),
 	)
 	if err != nil {
 		return nil, err
@@ -449,8 +438,8 @@ func (a *restClient) GetRound(
 func (a *restClient) GetRoundByID(
 	ctx context.Context, roundID string,
 ) (*client.Round, error) {
-	resp, err := a.svc.ArkServiceGetRoundByID(
-		ark_service.NewArkServiceGetRoundByIDParams().WithID(roundID),
+	resp, err := a.explorerSvc.ExplorerServiceGetRoundByID(
+		explorer_service.NewExplorerServiceGetRoundByIDParams().WithID(roundID),
 	)
 	if err != nil {
 		return nil, err
@@ -488,8 +477,8 @@ func (a *restClient) GetRoundByID(
 func (a *restClient) ListVtxos(
 	ctx context.Context, addr string,
 ) ([]client.Vtxo, []client.Vtxo, error) {
-	resp, err := a.svc.ArkServiceListVtxos(
-		ark_service.NewArkServiceListVtxosParams().WithAddress(addr),
+	resp, err := a.explorerSvc.ExplorerServiceListVtxos(
+		explorer_service.NewExplorerServiceListVtxosParams().WithAddress(addr),
 	)
 	if err != nil {
 		return nil, nil, err
@@ -530,7 +519,7 @@ func (a *restClient) DeleteNostrRecipient(
 
 func (c *restClient) Close() {}
 
-func newRestClient(
+func newRestArkClient(
 	serviceURL string,
 ) (ark_service.ClientService, error) {
 	parsedURL, err := url.Parse(serviceURL)
@@ -555,6 +544,33 @@ func newRestClient(
 	transport := httptransport.New(cfg.Host, cfg.BasePath, cfg.Schemes)
 	svc := arkservice.New(transport, strfmt.Default)
 	return svc.ArkService, nil
+}
+
+func newRestExplorerClient(
+	serviceURL string,
+) (explorer_service.ClientService, error) {
+	parsedURL, err := url.Parse(serviceURL)
+	if err != nil {
+		return nil, err
+	}
+
+	schemes := []string{parsedURL.Scheme}
+	host := parsedURL.Host
+	basePath := parsedURL.Path
+
+	if basePath == "" {
+		basePath = arkservice.DefaultBasePath
+	}
+
+	cfg := &explorerservice.TransportConfig{
+		Host:     host,
+		BasePath: basePath,
+		Schemes:  schemes,
+	}
+
+	transport := httptransport.New(cfg.Host, cfg.BasePath, cfg.Schemes)
+	svc := explorerservice.New(transport, strfmt.Default)
+	return svc.ExplorerService, nil
 }
 
 func toRoundStage(stage models.V1RoundStage) client.RoundStage {
