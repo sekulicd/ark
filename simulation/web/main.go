@@ -1026,7 +1026,7 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 			defer ticker.Stop()
 
 			client := &http.Client{Timeout: 5 * time.Second}
-			getRoundIdUrl := fmt.Sprintf("%s/v1/round", aspUrl)
+			getRoundIdUrl := fmt.Sprintf("%s/v1/round/", aspUrl)
 			log.Infof("Round Url: %s", getRoundIdUrl)
 			currentRoundID := ""
 
