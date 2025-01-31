@@ -1,0 +1,200 @@
+version: "1.0"
+
+description: "Simulation"
+
+clients:
+  - id: "client_0"
+    name: "Client0"
+  - id: "client_1"
+    name: "Client1"
+  - id: "client_2"
+    name: "Client2"
+  - id: "client_3"
+    name: "Client3"
+  - id: "client_4"
+    name: "Client4"
+  - id: "client_5"
+    name: "Client5"
+  - id: "client_6"
+    name: "Client6"
+  - id: "client_7"
+    name: "Client7"
+  - id: "client_8"
+    name: "Client8"
+  - id: "client_9"
+    name: "Client9"
+  - id: "client_10"
+    name: "Client10"
+  - id: "client_11"
+    name: "Client11"
+  - id: "client_12"
+    name: "Client12"
+  - id: "client_13"
+    name: "Client13"
+  - id: "client_14"
+    name: "Client14"
+  - id: "client_15"
+    name: "Client15"
+  - id: "client_16"
+    name: "Client16"
+  - id: "client_17"
+    name: "Client17"
+  - id: "client_18"
+    name: "Client18"
+  - id: "client_19"
+    name: "Client19"
+
+rounds:
+  - number: 1
+    actions:
+      client_0:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_1:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_2:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_3:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_4:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_5:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_6:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_7:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_8:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_9:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_10:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_11:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_12:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_13:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_14:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_15:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_16:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_17:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_18:
+        - type: "Onboard"
+          amount: 0.00002000
+      client_19:
+        - type: "Onboard"
+          amount: 0.00002000
+
+
+  - number: 2
+    actions:
+      client_0:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_1:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_2:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_3:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_4:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_5:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_6:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_7:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_8:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_9:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_10:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_11:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_12:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_13:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_14:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_15:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_16:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_17:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+      client_18:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+
+
+  - number: 3
+    actions:
+      client_19:
+        - type: "Claim"
+
+  - number: 4
+    actions:
+      client_19:
+        - type: "Stats"

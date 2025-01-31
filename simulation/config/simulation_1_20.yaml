@@ -1,0 +1,155 @@
+version: "1.0"
+
+description: "Simulation"
+
+clients:
+  - id: "client_0"
+    name: "Client0"
+  - id: "client_1"
+    name: "Client1"
+  - id: "client_2"
+    name: "Client2"
+  - id: "client_3"
+    name: "Client3"
+  - id: "client_4"
+    name: "Client4"
+  - id: "client_5"
+    name: "Client5"
+  - id: "client_6"
+    name: "Client6"
+  - id: "client_7"
+    name: "Client7"
+  - id: "client_8"
+    name: "Client8"
+  - id: "client_9"
+    name: "Client9"
+  - id: "client_10"
+    name: "Client10"
+  - id: "client_11"
+    name: "Client11"
+  - id: "client_12"
+    name: "Client12"
+  - id: "client_13"
+    name: "Client13"
+  - id: "client_14"
+    name: "Client14"
+  - id: "client_15"
+    name: "Client15"
+  - id: "client_16"
+    name: "Client16"
+  - id: "client_17"
+    name: "Client17"
+  - id: "client_18"
+    name: "Client18"
+  - id: "client_19"
+
+rounds:
+  - number: 1
+    actions:
+      client_0:
+        - type: "Onboard"
+          amount: 0.003
+
+  - number: 2
+    actions:
+      client_0:
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_1"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_2"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_3"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_4"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_5"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_6"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_7"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_8"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_9"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_10"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_11"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_12"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_13"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_14"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_15"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_16"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_17"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_18"
+        - type: "SendAsync"
+          amount: 0.00002000
+          to: "client_19"
+
+  - number: 3
+    actions:
+      client_0:
+        - type: "Claim"
+      client_1:
+        - type: "Claim"
+      client_2:
+        - type: "Claim"
+      client_3:
+        - type: "Claim"
+      client_4:
+        - type: "Claim"
+      client_5:
+        - type: "Claim"
+      client_6:
+        - type: "Claim"
+      client_7:
+        - type: "Claim"
+      client_8:
+        - type: "Claim"
+      client_9:
+        - type: "Claim"
+      client_10:
+        - type: "Claim"
+      client_11:
+        - type: "Claim"
+      client_12:
+        - type: "Claim"
+      client_13:
+        - type: "Claim"
+      client_14:
+        - type: "Claim"
+      client_15:
+        - type: "Claim"
+      client_16:
+        - type: "Claim"
+      client_17:
+        - type: "Claim"
+      client_18:
+        - type: "Claim"
+      client_19:
+        - type: "Claim"
