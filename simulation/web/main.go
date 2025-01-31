@@ -1027,6 +1027,7 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 
 			client := &http.Client{Timeout: 5 * time.Second}
 			getRoundIdUrl := fmt.Sprintf("%s/v1/round", aspUrl)
+			log.Infof("Round Url: %s", getRoundIdUrl)
 			currentRoundID := ""
 
 			for {
@@ -1045,6 +1046,8 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 						log.Errorf("Failed to decode round response: %v", err)
 						continue
 					}
+
+					log.Infof("Round: %+v", roundResp)
 
 					if currentRoundID == "" {
 						currentRoundID = roundResp.Round.ID
