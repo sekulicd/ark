@@ -34,6 +34,8 @@ properties:
         number:
           type: integer
           minimum: 1
+        sync:
+          type: boolean
         actions:
           type: object
           patternProperties:

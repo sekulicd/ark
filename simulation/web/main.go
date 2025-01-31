@@ -375,7 +375,7 @@ func runSimulation(
 	sendToFrontend("All clients have sent their addresses")
 
 	sendToFrontend("Starting simulation execution...")
-	executeSimulation(ctx, simulation, outputChan)
+	executeSimulation(ctx, aspUrl, simulation, outputChan)
 	sendToFrontend("Simulation execution completed")
 
 	sendToFrontend("Stopping clients...")
@@ -633,6 +633,7 @@ type ActionMap map[string]interface{}
 type Round struct {
 	Number  int                    `json:"number"`
 	Actions map[string][]ActionMap `json:"actions"`
+	Sync    bool                   `json:"sync"`
 }
 
 type Simulation struct {
@@ -991,7 +992,22 @@ type PageData struct {
 	ErrorMessage    string
 }
 
-func executeSimulation(ctx context.Context, simulation *Simulation, outputChan chan string) {
+type RoundResponse struct {
+	Round struct {
+		ID       string `json:"id"`
+		Start    string `json:"start"`
+		End      string `json:"end"`
+		RoundTx  string `json:"roundTx"`
+		VtxoTree struct {
+			Levels []interface{} `json:"levels"`
+		} `json:"vtxoTree"`
+		ForfeitTxs []interface{} `json:"forfeitTxs"`
+		Connectors []interface{} `json:"connectors"`
+		Stage      string        `json:"stage"`
+	} `json:"round"`
+}
+
+func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulation, outputChan chan string) {
 	for i, round := range simulation.Rounds {
 		select {
 		case <-ctx.Done():
@@ -1004,6 +1020,51 @@ func executeSimulation(ctx context.Context, simulation *Simulation, outputChan c
 		roundMsg := fmt.Sprintf("Executing Round %d at %s", round.Number, now.Format("2006-01-02 15:04:05"))
 		outputChan <- roundMsg
 		var wg sync.WaitGroup
+
+		if round.Sync {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+
+			client := &http.Client{Timeout: 5 * time.Second}
+			getRoundIdUrl := fmt.Sprintf("%s/v1/round", aspUrl)
+			currentRoundID := ""
+
+			for {
+				select {
+				case <-ticker.C:
+					resp, err := client.Get(getRoundIdUrl)
+					if err != nil {
+						log.Errorf("Failed to fetch round info: %v", err)
+						continue
+					}
+
+					var roundResp RoundResponse
+					err = json.NewDecoder(resp.Body).Decode(&roundResp)
+					resp.Body.Close()
+					if err != nil {
+						log.Errorf("Failed to decode round response: %v", err)
+						continue
+					}
+
+					if currentRoundID == "" {
+						currentRoundID = roundResp.Round.ID
+						log.Infof("Initial round ID: %s", currentRoundID)
+					} else if currentRoundID != roundResp.Round.ID {
+						log.Infof("Synced with round ID: %s", roundResp.Round.ID)
+						outputChan <- fmt.Sprintf("Synced with round ID: %s", roundResp.Round.ID)
+						break
+					}
+
+					continue
+
+				case <-ctx.Done():
+					outputChan <- fmt.Sprintf("Execution canceled when syncing")
+					return
+				}
+				break
+			}
+		}
+
 		for clientID, actions := range round.Actions {
 			wg.Add(1)
 			go func(clientID string, actions []ActionMap) {

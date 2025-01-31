@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	middleware "github.com/ark-network/ark/simulation/sdk-middleware"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	middleware "github.com/ark-network/ark/simulation/sdk-middleware"
 
 	arksdk "github.com/ark-network/ark/pkg/client-sdk"
 	"github.com/ark-network/ark/pkg/client-sdk/store"
@@ -86,6 +87,7 @@ type Client struct {
 	cancel         context.CancelFunc
 	Address        string
 	StatsCollector *middleware.InMemoryStatsCollector
+	currentRoundID string
 }
 
 func (c *Client) setupArkClient(explorerUrl, aspUrl string) error {
@@ -337,6 +339,99 @@ func (c *Client) statsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+type Round struct {
+	ID     string `json:"id"`
+	Start  string `json:"start"`
+	End    string `json:"end"`
+	Stage  string `json:"stage"`
+}
+
+type RoundResponse struct {
+	Round Round `json:"round"`
+}
+
+func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[string][]interface{}) error {
+	if sync {
+		// Wait for round to start
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		
+		url := "https://master.mutinynet.arklabs.to/v1/round/"
+		client := &http.Client{Timeout: 5 * time.Second}
+
+		for {
+			select {
+			case <-ticker.C:
+				resp, err := client.Get(url)
+				if err != nil {
+					log.Errorf("Failed to fetch round info: %v", err)
+					continue
+				}
+
+				var roundResp RoundResponse
+				err = json.NewDecoder(resp.Body).Decode(&roundResp)
+				resp.Body.Close()
+				if err != nil {
+					log.Errorf("Failed to decode round response: %v", err)
+					continue
+				}
+
+				if c.currentRoundID == "" {
+					c.currentRoundID = roundResp.Round.ID
+					log.Infof("Initial round ID: %s", c.currentRoundID)
+				} else if c.currentRoundID != roundResp.Round.ID {
+					log.Infof("Round ID changed from %s to %s, proceeding with actions", c.currentRoundID, roundResp.Round.ID)
+					c.currentRoundID = roundResp.Round.ID
+					break
+				}
+				
+				log.Debugf("Current round stage: %s", roundResp.Round.Stage)
+				continue
+
+			case <-c.ctx.Done():
+				return fmt.Errorf("context cancelled while waiting for round change: %v", c.ctx.Err())
+			}
+			break
+		}
+	}
+
+	// Execute actions
+	for clientID, clientActions := range actions {
+		for _, action := range clientActions {
+			actionMap := action.(map[string]interface{})
+			actionType := actionMap["type"].(string)
+			
+			log.Infof("Executing action %s for client %s", actionType, clientID)
+
+			switch actionType {
+			case "Onboard":
+				amount := uint32(actionMap["amount"].(float64))
+				if err := c.onboard(serverUrl, amount); err != nil {
+					return fmt.Errorf("failed to onboard: %v", err)
+				}
+			case "SendAsync":
+				amount := uint32(actionMap["amount"].(float64))
+				to := actionMap["to"].(string)
+				if err := c.ArkClient.SendAsync(c.ctx, amount, to); err != nil {
+					return fmt.Errorf("failed to send async: %v", err)
+				}
+			case "Claim":
+				if err := c.claim(); err != nil {
+					return fmt.Errorf("failed to claim: %v", err)
+				}
+			case "Balance":
+				balance, err := c.ArkClient.GetBalance(c.ctx)
+				if err != nil {
+					return fmt.Errorf("failed to get balance: %v", err)
+				}
+				log.Infof("Current balance: %d", balance)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *Client) onboard(url string, amount uint32) error {

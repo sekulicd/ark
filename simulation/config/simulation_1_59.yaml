@@ -313,6 +313,7 @@ rounds:
           to: "client_59"
 
   - number: 3
+    sync: true
     actions:
       client_0:
         - type: "Claim"
