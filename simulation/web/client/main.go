@@ -342,10 +342,10 @@ func (c *Client) statsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type Round struct {
-	ID     string `json:"id"`
-	Start  string `json:"start"`
-	End    string `json:"end"`
-	Stage  string `json:"stage"`
+	ID    string `json:"id"`
+	Start string `json:"start"`
+	End   string `json:"end"`
+	Stage string `json:"stage"`
 }
 
 type RoundResponse struct {
@@ -357,7 +357,7 @@ func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[strin
 		// Wait for round to start
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
-		
+
 		url := "https://master.mutinynet.arklabs.to/v1/round/"
 		client := &http.Client{Timeout: 5 * time.Second}
 
@@ -386,7 +386,7 @@ func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[strin
 					c.currentRoundID = roundResp.Round.ID
 					break
 				}
-				
+
 				log.Debugf("Current round stage: %s", roundResp.Round.Stage)
 				continue
 
@@ -402,7 +402,7 @@ func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[strin
 		for _, action := range clientActions {
 			actionMap := action.(map[string]interface{})
 			actionType := actionMap["type"].(string)
-			
+
 			log.Infof("Executing action %s for client %s", actionType, clientID)
 
 			switch actionType {
@@ -412,9 +412,10 @@ func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[strin
 					return fmt.Errorf("failed to onboard: %v", err)
 				}
 			case "SendAsync":
-				amount := uint32(actionMap["amount"].(float64))
+				amount := uint64(actionMap["amount"].(float64))
 				to := actionMap["to"].(string)
-				if err := c.ArkClient.SendAsync(c.ctx, amount, to); err != nil {
+				receivers := []arksdk.Receiver{arksdk.NewBitcoinReceiver(to, amount)}
+				if _, err := c.ArkClient.SendOffChain(c.ctx, false, receivers, true); err != nil {
 					return fmt.Errorf("failed to send async: %v", err)
 				}
 			case "Claim":
@@ -422,11 +423,11 @@ func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[strin
 					return fmt.Errorf("failed to claim: %v", err)
 				}
 			case "Balance":
-				balance, err := c.ArkClient.GetBalance(c.ctx)
+				balance, err := c.ArkClient.Balance(c.ctx, false)
 				if err != nil {
 					return fmt.Errorf("failed to get balance: %v", err)
 				}
-				log.Infof("Current balance: %d", balance)
+				log.Infof("Current balance: %+v", balance)
 			}
 		}
 	}

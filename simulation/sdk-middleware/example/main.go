@@ -51,7 +51,6 @@ func main() {
 	chain.Add(middleware.NewCPUUtilizationMiddleware(compositeStatsCollector))
 
 	// Middlewares using loggingStatsCollector only
-	chain.Add(middleware.NewMemoryProfileMiddleware(loggingStatsCollector, profileDir))
 	chain.Add(middleware.NewMemoryStatsMiddleware(loggingStatsCollector))
 
 	client := middleware.NewArkClientProxy(originalClient, chain)

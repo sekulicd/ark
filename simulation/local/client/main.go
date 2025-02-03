@@ -291,7 +291,7 @@ func (c *Client) sendAsync(amount float64, toClientID string) error {
 		arksdk.NewBitcoinReceiver(recipientAddress, uint64(amount*1e8)),
 	}
 
-	_, err = c.ArkClient.SendOffChain(ctx, false, receivers)
+	_, err = c.ArkClient.SendOffChain(ctx, false, receivers, true)
 	if err != nil {
 		return fmt.Errorf("client %s failed to send %f BTC to client %s: %v",
 			c.ID, amount, toClientID, err)
