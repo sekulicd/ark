@@ -551,7 +551,6 @@ func TestReactToRedemptionOfVtxosSpentAsync(t *testing.T) {
 		for i := 0; i < cltvBlocks+1; i++ {
 			err = utils.GenerateBlock()
 			require.NoError(t, err)
-			time.Sleep(1 * time.Second)
 		}
 
 		_, bobTxid, err := grpcTransportClient.SubmitRedeemTx(ctx, signedTx)
@@ -897,7 +896,6 @@ func TestSendToCLTVMultisigClosure(t *testing.T) {
 	for i := 0; i < cltvBlocks+1; i++ {
 		err = utils.GenerateBlock()
 		require.NoError(t, err)
-		time.Sleep(1 * time.Second)
 	}
 
 	_, _, err = grpcAlice.SubmitRedeemTx(ctx, signedTx)

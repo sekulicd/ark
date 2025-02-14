@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -417,7 +418,7 @@ func (s *covenantlessService) SubmitRedeemTx(
 	}
 
 	// verify the tapscript signatures
-	if valid, err := s.builder.VerifyTapscriptPartialSigs(redeemTx); err != nil || !valid {
+	if valid, _, err := s.builder.VerifyTapscriptPartialSigs(redeemTx); err != nil || !valid {
 		return "", "", fmt.Errorf("invalid tx signature: %s", err)
 	}
 
@@ -1103,6 +1104,9 @@ func (s *covenantlessService) start() {
 }
 
 func (s *covenantlessService) startRound() {
+	// reset the forfeit txs map to avoid polluting the next batch of forfeits transactions
+	s.forfeitTxs.reset()
+
 	dustAmount, err := s.wallet.GetDustAmount(context.Background())
 	if err != nil {
 		log.WithError(err).Warn("failed to get dust amount")
@@ -1115,20 +1119,21 @@ func (s *covenantlessService) startRound() {
 	s.currentRound = round
 
 	defer func() {
-		time.Sleep(time.Duration(s.roundInterval/3) * time.Second)
-		s.startFinalization()
+		roundEndTime := time.Now().Add(time.Duration(s.roundInterval) * time.Second)
+		time.Sleep(time.Duration(s.roundInterval/6) * time.Second)
+		s.startFinalization(roundEndTime)
 	}()
 
 	log.Debugf("started registration stage for new round: %s", round.Id)
 }
 
-func (s *covenantlessService) startFinalization() {
+func (s *covenantlessService) startFinalization(roundEndTime time.Time) {
 	log.Debugf("started finalization stage for round: %s", s.currentRound.Id)
 	ctx := context.Background()
 	round := s.currentRound
 
 	roundRemainingDuration := time.Duration((s.roundInterval/3)*2-1) * time.Second
-	thirdOfRemainingDuration := time.Duration(roundRemainingDuration / 3)
+	thirdOfRemainingDuration := roundRemainingDuration / 3
 
 	var notes []note.Note
 	var roundAborted bool
@@ -1147,8 +1152,8 @@ func (s *covenantlessService) startFinalization() {
 			s.startRound()
 			return
 		}
-		time.Sleep(thirdOfRemainingDuration)
-		s.finalizeRound(notes)
+
+		s.finalizeRound(notes, roundEndTime)
 	}()
 
 	if round.IsFailed() {
@@ -1377,7 +1382,7 @@ func (s *covenantlessService) propagateRoundSigningNoncesGeneratedEvent(combined
 	s.eventsCh <- ev
 }
 
-func (s *covenantlessService) finalizeRound(notes []note.Note) {
+func (s *covenantlessService) finalizeRound(notes []note.Note, roundEndTime time.Time) {
 	defer s.startRound()
 
 	ctx := context.Background()
@@ -1394,10 +1399,26 @@ func (s *covenantlessService) finalizeRound(notes []note.Note) {
 		}
 	}()
 
+	remainingTime := time.Until(roundEndTime)
+	// Wait for the remaining forfeit txs to be sent,
+	// but only wait until the round interval expires.
+	select {
+	case <-s.forfeitTxs.doneCh:
+		log.Debug("all forfeit txs have been sent")
+	case <-time.After(remainingTime):
+		log.Debug("timeout waiting for forfeit txs")
+	}
+
 	forfeitTxs, err := s.forfeitTxs.pop()
 	if err != nil {
 		changes = round.Fail(fmt.Errorf("failed to finalize round: %s", err))
 		log.WithError(err).Warn("failed to finalize round")
+		return
+	}
+
+	if err := s.verifyForfeitTxsSigs(forfeitTxs); err != nil {
+		changes = round.Fail(err)
+		log.WithError(err).Warn("failed to validate forfeit txs")
 		return
 	}
 
@@ -1937,6 +1958,52 @@ func (s *covenantlessService) markAsRedeemed(ctx context.Context, vtxo domain.Vt
 
 	log.Debugf("vtxo %s:%d redeemed", vtxo.Txid, vtxo.VOut)
 	return nil
+}
+
+func (s *covenantlessService) verifyForfeitTxsSigs(txs []string) error {
+	nbWorkers := runtime.NumCPU()
+	jobs := make(chan string, len(txs))
+	errChan := make(chan error, 1)
+	wg := sync.WaitGroup{}
+	wg.Add(nbWorkers)
+
+	for i := 0; i < nbWorkers; i++ {
+		go func() {
+			defer wg.Done()
+
+			for tx := range jobs {
+				valid, txid, err := s.builder.VerifyTapscriptPartialSigs(tx)
+				if err != nil {
+					errChan <- fmt.Errorf("failed to validate forfeit tx %s: %s", txid, err)
+					return
+				}
+
+				if !valid {
+					errChan <- fmt.Errorf("invalid signature for forfeit tx %s", txid)
+					return
+				}
+			}
+		}()
+	}
+
+	for _, tx := range txs {
+		select {
+		case err := <-errChan:
+			return err
+		default:
+			jobs <- tx
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	select {
+	case err := <-errChan:
+		return err
+	default:
+		close(errChan)
+		return nil
+	}
 }
 
 func findForfeitTxBitcoin(

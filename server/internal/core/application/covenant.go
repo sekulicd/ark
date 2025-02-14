@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"runtime"
 	"sync"
 	"time"
 
@@ -591,6 +592,9 @@ func (s *covenantService) start() {
 }
 
 func (s *covenantService) startRound() {
+	// reset the forfeit txs map to avoid polluting the next batch of forfeits transactions
+	s.forfeitTxs.reset()
+
 	dustAmount, err := s.wallet.GetDustAmount(context.Background())
 	if err != nil {
 		log.WithError(err).Warn("failed to retrieve dust amount")
@@ -602,14 +606,15 @@ func (s *covenantService) startRound() {
 	s.currentRound = round
 
 	defer func() {
-		time.Sleep(time.Duration(s.roundInterval/3) * time.Second)
-		s.startFinalization()
+		roundEndTime := time.Now().Add(time.Duration(s.roundInterval) * time.Second)
+		time.Sleep(time.Duration(s.roundInterval/6) * time.Second)
+		s.startFinalization(roundEndTime)
 	}()
 
 	log.Debugf("started registration stage for new round: %s", round.Id)
 }
 
-func (s *covenantService) startFinalization() {
+func (s *covenantService) startFinalization(roundEndTime time.Time) {
 	ctx := context.Background()
 	round := s.currentRound
 
@@ -628,8 +633,8 @@ func (s *covenantService) startFinalization() {
 			s.startRound()
 			return
 		}
-		time.Sleep(time.Duration((s.roundInterval/3)-1) * time.Second)
-		s.finalizeRound()
+
+		s.finalizeRound(roundEndTime)
 	}()
 
 	if round.IsFailed() {
@@ -683,7 +688,7 @@ func (s *covenantService) startFinalization() {
 	log.Debugf("started finalization stage for round: %s", round.Id)
 }
 
-func (s *covenantService) finalizeRound() {
+func (s *covenantService) finalizeRound(roundEndTime time.Time) {
 	defer s.startRound()
 
 	ctx := context.Background()
@@ -700,10 +705,26 @@ func (s *covenantService) finalizeRound() {
 		}
 	}()
 
+	remainingTime := time.Until(roundEndTime)
+	// Wait for the remaining forfeit txs to be sent,
+	// but only wait until the round interval expires.
+	select {
+	case <-s.forfeitTxs.doneCh:
+		log.Debug("all forfeit txs have been sent")
+	case <-time.After(remainingTime):
+		log.Debug("timeout waiting for forfeit txs")
+	}
+
 	forfeitTxs, err := s.forfeitTxs.pop()
 	if err != nil {
 		changes = round.Fail(fmt.Errorf("failed to finalize round: %s", err))
 		log.WithError(err).Warn("failed to finalize round")
+		return
+	}
+
+	if err := s.verifyForfeitTxsSigs(forfeitTxs); err != nil {
+		changes = round.Fail(err)
+		log.WithError(err).Warn("failed to validate forfeit txs")
 		return
 	}
 
@@ -1216,6 +1237,52 @@ func (s *covenantService) extractVtxosScripts(vtxos []domain.Vtxo) ([]string, er
 		scripts = append(scripts, script)
 	}
 	return scripts, nil
+}
+
+func (s *covenantService) verifyForfeitTxsSigs(txs []string) error {
+	nbWorkers := runtime.NumCPU()
+	jobs := make(chan string, len(txs))
+	errChan := make(chan error, 1)
+	wg := sync.WaitGroup{}
+	wg.Add(nbWorkers)
+
+	for i := 0; i < nbWorkers; i++ {
+		go func() {
+			defer wg.Done()
+
+			for tx := range jobs {
+				valid, txid, err := s.builder.VerifyTapscriptPartialSigs(tx)
+				if err != nil {
+					errChan <- fmt.Errorf("failed to validate forfeit tx %s: %s", txid, err)
+					return
+				}
+
+				if !valid {
+					errChan <- fmt.Errorf("invalid signature for forfeit tx %s", txid)
+					return
+				}
+			}
+		}()
+	}
+
+	for _, tx := range txs {
+		select {
+		case err := <-errChan:
+			return err
+		default:
+			jobs <- tx
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	select {
+	case err := <-errChan:
+		return err
+	default:
+		close(errChan)
+		return nil
+	}
 }
 
 func (s *covenantService) saveEvents(
