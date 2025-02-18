@@ -669,7 +669,7 @@ func startClients(
 		TaskDefinition: aws.String(taskDefinition),
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	g, gctx := errgroup.WithContext(ctxWithTimeout)
@@ -914,7 +914,7 @@ func waitForTaskRunningAndGetIP(ctx context.Context, ecsClient *ecs.Client, clus
 
 func waitForClientsToSendAddresses(ctx context.Context, clientIDs []string) {
 	log.Info("Waiting for clients to send addresses...")
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -1089,7 +1089,7 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 
 					ctxWithTimeout, cancel := context.WithTimeout(
 						ctx,
-						3*time.Minute,
+						5*time.Minute,
 					)
 					defer cancel()
 
