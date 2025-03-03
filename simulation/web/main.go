@@ -994,7 +994,7 @@ type PageData struct {
 
 type RoundResponse struct {
 	Round struct {
-		ID       string `json:"id"`
+		Id       string `json:"id"`
 		Start    string `json:"start"`
 		End      string `json:"end"`
 		RoundTx  string `json:"roundTx"`
@@ -1002,8 +1002,10 @@ type RoundResponse struct {
 			Levels []interface{} `json:"levels"`
 		} `json:"vtxoTree"`
 		ForfeitTxs []interface{} `json:"forfeitTxs"`
-		Connectors []interface{} `json:"connectors"`
-		Stage      string        `json:"stage"`
+		Connectors struct {
+			Levels []interface{} `json:"levels"`
+		} `json:"connectors"`
+		Stage string `json:"stage"`
 	} `json:"round"`
 }
 
