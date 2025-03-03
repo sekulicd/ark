@@ -669,7 +669,7 @@ func startClients(
 		TaskDefinition: aws.String(taskDefinition),
 	}
 
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
 	g, gctx := errgroup.WithContext(ctxWithTimeout)
@@ -914,7 +914,7 @@ func waitForTaskRunningAndGetIP(ctx context.Context, ecsClient *ecs.Client, clus
 
 func waitForClientsToSendAddresses(ctx context.Context, clientIDs []string) {
 	log.Info("Waiting for clients to send addresses...")
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -1008,9 +1008,17 @@ type RoundResponse struct {
 }
 
 func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulation, outputChan chan string) {
+	ctxWithTimeout, cancel := context.WithTimeout(
+		ctx,
+		5*time.Minute,
+	)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 	for i, round := range simulation.Rounds {
 		select {
-		case <-ctx.Done():
+		case <-ctxWithTimeout.Done():
 			outputChan <- "Simulation canceled"
 			return
 		default:
@@ -1022,9 +1030,6 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 		var wg sync.WaitGroup
 
 		if round.Sync {
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-
 			client := &http.Client{Timeout: 5 * time.Second}
 			getRoundIdUrl := fmt.Sprintf("%s/v1/round/", aspUrl)
 			log.Infof("Round Url: %s", getRoundIdUrl)
@@ -1060,7 +1065,7 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 
 					continue
 
-				case <-ctx.Done():
+				case <-ctxWithTimeout.Done():
 					outputChan <- fmt.Sprintf("Execution canceled when syncing")
 					return
 				}
@@ -1074,7 +1079,7 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 				defer wg.Done()
 
 				select {
-				case <-ctx.Done():
+				case <-ctxWithTimeout.Done():
 					outputChan <- fmt.Sprintf("Execution canceled for client %s", clientID)
 					return
 				default:
@@ -1086,12 +1091,6 @@ func executeSimulation(ctx context.Context, aspUrl string, simulation *Simulatio
 						outputChan <- fmt.Sprintf("Warning: Invalid action type for client %s", clientID)
 						return
 					}
-
-					ctxWithTimeout, cancel := context.WithTimeout(
-						ctx,
-						5*time.Minute,
-					)
-					defer cancel()
 
 					if err := executeClientAction(ctxWithTimeout, clientID, actionType, action); err != nil {
 						outputChan <- fmt.Sprintf("Warning: Error executing %s for client %s: %v", actionType, clientID, err)

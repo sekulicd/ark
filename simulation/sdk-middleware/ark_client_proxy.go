@@ -130,20 +130,6 @@ func (p *ArkClientProxy) Receive(ctx context.Context) (offchainAddr string, boar
 
 }
 
-func (p *ArkClientProxy) SendOnChain(ctx context.Context, receivers []arksdk.Receiver) (string, error) {
-
-	middlewareArgs := []interface{}{ctx, receivers}
-	ctx = p.chain.Before(ctx, "SendOnChain", middlewareArgs)
-
-	ret0, ret1 := p.client.SendOnChain(ctx, receivers)
-	results := []interface{}{ret0, ret1}
-
-	p.chain.After(ctx, "SendOnChain", results, ret1)
-
-	return ret0, ret1
-
-}
-
 func (p *ArkClientProxy) SendOffChain(ctx context.Context, withExpiryCoinselect bool, receivers []arksdk.Receiver, withZeroFees bool) (string, error) {
 
 	middlewareArgs := []interface{}{ctx, withExpiryCoinselect, receivers, withZeroFees}
@@ -158,34 +144,6 @@ func (p *ArkClientProxy) SendOffChain(ctx context.Context, withExpiryCoinselect 
 
 }
 
-func (p *ArkClientProxy) UnilateralRedeem(ctx context.Context) error {
-
-	middlewareArgs := []interface{}{ctx}
-	ctx = p.chain.Before(ctx, "UnilateralRedeem", middlewareArgs)
-
-	ret0 := p.client.UnilateralRedeem(ctx)
-	results := []interface{}{ret0}
-
-	p.chain.After(ctx, "UnilateralRedeem", results, ret0)
-
-	return ret0
-
-}
-
-func (p *ArkClientProxy) CollaborativeRedeem(ctx context.Context, addr string, amount uint64, withExpiryCoinselect bool, opts ...arksdk.Option) (string, error) {
-
-	middlewareArgs := []interface{}{ctx, addr, amount, withExpiryCoinselect, opts}
-	ctx = p.chain.Before(ctx, "CollaborativeRedeem", middlewareArgs)
-
-	ret0, ret1 := p.client.CollaborativeRedeem(ctx, addr, amount, withExpiryCoinselect, opts...)
-	results := []interface{}{ret0, ret1}
-
-	p.chain.After(ctx, "CollaborativeRedeem", results, ret1)
-
-	return ret0, ret1
-
-}
-
 func (p *ArkClientProxy) Settle(ctx context.Context, opts ...arksdk.Option) (string, error) {
 
 	middlewareArgs := []interface{}{ctx, opts}
@@ -195,6 +153,76 @@ func (p *ArkClientProxy) Settle(ctx context.Context, opts ...arksdk.Option) (str
 	results := []interface{}{ret0, ret1}
 
 	p.chain.After(ctx, "Settle", results, ret1)
+
+	return ret0, ret1
+
+}
+
+func (p *ArkClientProxy) CollaborativeExit(ctx context.Context, addr string, amount uint64, withExpiryCoinselect bool, opts ...arksdk.Option) (string, error) {
+
+	middlewareArgs := []interface{}{ctx, addr, amount, withExpiryCoinselect, opts}
+	ctx = p.chain.Before(ctx, "CollaborativeExit", middlewareArgs)
+
+	ret0, ret1 := p.client.CollaborativeExit(ctx, addr, amount, withExpiryCoinselect, opts...)
+	results := []interface{}{ret0, ret1}
+
+	p.chain.After(ctx, "CollaborativeExit", results, ret1)
+
+	return ret0, ret1
+
+}
+
+func (p *ArkClientProxy) StartUnilateralExit(ctx context.Context) error {
+
+	middlewareArgs := []interface{}{ctx}
+	ctx = p.chain.Before(ctx, "StartUnilateralExit", middlewareArgs)
+
+	ret0 := p.client.StartUnilateralExit(ctx)
+	results := []interface{}{ret0}
+
+	p.chain.After(ctx, "StartUnilateralExit", results, ret0)
+
+	return ret0
+
+}
+
+func (p *ArkClientProxy) CompleteUnilateralExit(ctx context.Context, to string) (string, error) {
+
+	middlewareArgs := []interface{}{ctx, to}
+	ctx = p.chain.Before(ctx, "CompleteUnilateralExit", middlewareArgs)
+
+	ret0, ret1 := p.client.CompleteUnilateralExit(ctx, to)
+	results := []interface{}{ret0, ret1}
+
+	p.chain.After(ctx, "CompleteUnilateralExit", results, ret1)
+
+	return ret0, ret1
+
+}
+
+func (p *ArkClientProxy) OnboardAgainAllExpiredBoardings(ctx context.Context) (string, error) {
+
+	middlewareArgs := []interface{}{ctx}
+	ctx = p.chain.Before(ctx, "OnboardAgainAllExpiredBoardings", middlewareArgs)
+
+	ret0, ret1 := p.client.OnboardAgainAllExpiredBoardings(ctx)
+	results := []interface{}{ret0, ret1}
+
+	p.chain.After(ctx, "OnboardAgainAllExpiredBoardings", results, ret1)
+
+	return ret0, ret1
+
+}
+
+func (p *ArkClientProxy) WithdrawFromAllExpiredBoardings(ctx context.Context, to string) (string, error) {
+
+	middlewareArgs := []interface{}{ctx, to}
+	ctx = p.chain.Before(ctx, "WithdrawFromAllExpiredBoardings", middlewareArgs)
+
+	ret0, ret1 := p.client.WithdrawFromAllExpiredBoardings(ctx, to)
+	results := []interface{}{ret0, ret1}
+
+	p.chain.After(ctx, "WithdrawFromAllExpiredBoardings", results, ret1)
 
 	return ret0, ret1
 
@@ -246,14 +274,29 @@ func (p *ArkClientProxy) GetTransactionHistory(ctx context.Context) ([]types.Tra
 
 }
 
-func (p *ArkClientProxy) GetTransactionEventChannel() chan types.TransactionEvent {
+func (p *ArkClientProxy) GetTransactionEventChannel(ctx context.Context) chan types.TransactionEvent {
 
-	p.chain.Before(nil, "GetTransactionEventChannel", nil)
+	middlewareArgs := []interface{}{ctx}
+	ctx = p.chain.Before(ctx, "GetTransactionEventChannel", middlewareArgs)
 
-	ret0 := p.client.GetTransactionEventChannel()
+	ret0 := p.client.GetTransactionEventChannel(ctx)
 	results := []interface{}{ret0}
 
-	p.chain.After(nil, "GetTransactionEventChannel", results, nil)
+	p.chain.After(ctx, "GetTransactionEventChannel", results, nil)
+
+	return ret0
+
+}
+
+func (p *ArkClientProxy) GetVtxoEventChannel(ctx context.Context) chan types.VtxoEvent {
+
+	middlewareArgs := []interface{}{ctx}
+	ctx = p.chain.Before(ctx, "GetVtxoEventChannel", middlewareArgs)
+
+	ret0 := p.client.GetVtxoEventChannel(ctx)
+	results := []interface{}{ret0}
+
+	p.chain.After(ctx, "GetVtxoEventChannel", results, nil)
 
 	return ret0
 

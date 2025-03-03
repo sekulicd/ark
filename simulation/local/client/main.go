@@ -304,7 +304,7 @@ func (c *Client) sendAsync(amount float64, toClientID string) error {
 
 func (c *Client) redeem(force bool, amount float64, address string, computeExpiration bool) error {
 	if force {
-		if err := c.ArkClient.UnilateralRedeem(c.ctx); err != nil {
+		if err := c.ArkClient.StartUnilateralExit(c.ctx); err != nil {
 			return fmt.Errorf("client %s failed to redeem: %v", c.ID, err)
 		}
 
@@ -313,7 +313,7 @@ func (c *Client) redeem(force bool, amount float64, address string, computeExpir
 		return nil
 	}
 
-	txID, err := c.ArkClient.CollaborativeRedeem(c.ctx, address, uint64(amount*1e8), computeExpiration)
+	txID, err := c.ArkClient.CollaborativeExit(c.ctx, address, uint64(amount*1e8), computeExpiration)
 	if err != nil {
 		return fmt.Errorf("client %s failed to redeem: %v", c.ID, err)
 	}

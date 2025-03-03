@@ -5,13 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	middleware "github.com/ark-network/ark/simulation/sdk-middleware"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
-
-	middleware "github.com/ark-network/ark/simulation/sdk-middleware"
 
 	arksdk "github.com/ark-network/ark/pkg/client-sdk"
 	"github.com/ark-network/ark/pkg/client-sdk/store"
@@ -307,7 +306,7 @@ func (c *Client) redeemHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Force {
-		if err := c.ArkClient.UnilateralRedeem(r.Context()); err != nil {
+		if err := c.ArkClient.StartUnilateralExit(r.Context()); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -315,7 +314,7 @@ func (c *Client) redeemHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	txID, err := c.ArkClient.CollaborativeRedeem(r.Context(), req.Address, uint64(req.Amount*1e8), req.ComputeExpiration)
+	txID, err := c.ArkClient.CollaborativeExit(r.Context(), req.Address, uint64(req.Amount*1e8), req.ComputeExpiration)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -339,100 +338,6 @@ func (c *Client) statsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
-}
-
-type Round struct {
-	ID    string `json:"id"`
-	Start string `json:"start"`
-	End   string `json:"end"`
-	Stage string `json:"stage"`
-}
-
-type RoundResponse struct {
-	Round Round `json:"round"`
-}
-
-func (c *Client) executeSimulation(roundNumber int, sync bool, actions map[string][]interface{}) error {
-	if sync {
-		// Wait for round to start
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		url := "https://master.mutinynet.arklabs.to/v1/round/"
-		client := &http.Client{Timeout: 5 * time.Second}
-
-		for {
-			select {
-			case <-ticker.C:
-				resp, err := client.Get(url)
-				if err != nil {
-					log.Errorf("Failed to fetch round info: %v", err)
-					continue
-				}
-
-				var roundResp RoundResponse
-				err = json.NewDecoder(resp.Body).Decode(&roundResp)
-				resp.Body.Close()
-				if err != nil {
-					log.Errorf("Failed to decode round response: %v", err)
-					continue
-				}
-
-				if c.currentRoundID == "" {
-					c.currentRoundID = roundResp.Round.ID
-					log.Infof("Initial round ID: %s", c.currentRoundID)
-				} else if c.currentRoundID != roundResp.Round.ID {
-					log.Infof("Round ID changed from %s to %s, proceeding with actions", c.currentRoundID, roundResp.Round.ID)
-					c.currentRoundID = roundResp.Round.ID
-					break
-				}
-
-				log.Debugf("Current round stage: %s", roundResp.Round.Stage)
-				continue
-
-			case <-c.ctx.Done():
-				return fmt.Errorf("context cancelled while waiting for round change: %v", c.ctx.Err())
-			}
-			break
-		}
-	}
-
-	// Execute actions
-	for clientID, clientActions := range actions {
-		for _, action := range clientActions {
-			actionMap := action.(map[string]interface{})
-			actionType := actionMap["type"].(string)
-
-			log.Infof("Executing action %s for client %s", actionType, clientID)
-
-			switch actionType {
-			case "Onboard":
-				amount := uint32(actionMap["amount"].(float64))
-				if err := c.onboard(serverUrl, amount); err != nil {
-					return fmt.Errorf("failed to onboard: %v", err)
-				}
-			case "SendAsync":
-				amount := uint64(actionMap["amount"].(float64))
-				to := actionMap["to"].(string)
-				receivers := []arksdk.Receiver{arksdk.NewBitcoinReceiver(to, amount)}
-				if _, err := c.ArkClient.SendOffChain(c.ctx, false, receivers, true); err != nil {
-					return fmt.Errorf("failed to send async: %v", err)
-				}
-			case "Claim":
-				if err := c.claim(); err != nil {
-					return fmt.Errorf("failed to claim: %v", err)
-				}
-			case "Balance":
-				balance, err := c.ArkClient.Balance(c.ctx, false)
-				if err != nil {
-					return fmt.Errorf("failed to get balance: %v", err)
-				}
-				log.Infof("Current balance: %+v", balance)
-			}
-		}
-	}
-
-	return nil
 }
 
 func (c *Client) onboard(url string, amount uint32) error {
