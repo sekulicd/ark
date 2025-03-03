@@ -994,7 +994,7 @@ type PageData struct {
 
 type RoundResponse struct {
 	Round struct {
-		Id       string `json:"id"`
+		ID       string `json:"id"`
 		Start    string `json:"start"`
 		End      string `json:"end"`
 		RoundTx  string `json:"roundTx"`
