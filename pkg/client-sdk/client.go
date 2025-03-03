@@ -99,8 +99,12 @@ func (a *arkClient) Receive(ctx context.Context) (string, string, error) {
 	return offchainAddr.Address, boardingAddr.Address, nil
 }
 
-func (a *arkClient) GetTransactionEventChannel() chan types.TransactionEvent {
+func (a *arkClient) GetTransactionEventChannel(_ context.Context) chan types.TransactionEvent {
 	return a.store.TransactionStore().GetEventChannel()
+}
+
+func (a *arkClient) GetVtxoEventChannel(_ context.Context) chan types.VtxoEvent {
+	return a.store.VtxoStore().GetEventChannel()
 }
 
 func (a *arkClient) SignTransaction(ctx context.Context, tx string) (string, error) {
@@ -115,6 +119,27 @@ func (a *arkClient) Stop() error {
 	a.store.Close()
 
 	return nil
+}
+
+func (a *arkClient) ListVtxos(
+	ctx context.Context,
+) (spendableVtxos, spentVtxos []client.Vtxo, err error) {
+	offchainAddrs, _, _, err := a.wallet.GetAddresses(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, addr := range offchainAddrs {
+		spendable, spent, err := a.client.ListVtxos(ctx, addr.Address)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		spendableVtxos = append(spendableVtxos, spendable...)
+		spentVtxos = append(spentVtxos, spent...)
+	}
+
+	return
 }
 
 func (a *arkClient) initWithWallet(
@@ -296,25 +321,14 @@ func (a *arkClient) ping(
 	return ticker.Stop
 }
 
-func (a *arkClient) ListVtxos(
-	ctx context.Context,
-) (spendableVtxos, spentVtxos []client.Vtxo, err error) {
-	offchainAddrs, _, _, err := a.wallet.GetAddresses(ctx)
-	if err != nil {
-		return
+func (a *arkClient) safeCheck() error {
+	if a.wallet == nil {
+		return fmt.Errorf("wallet not initialized")
 	}
-
-	for _, addr := range offchainAddrs {
-		spendable, spent, err := a.client.ListVtxos(ctx, addr.Address)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		spendableVtxos = append(spendableVtxos, spendable...)
-		spentVtxos = append(spentVtxos, spent...)
+	if a.wallet.IsLocked() {
+		return fmt.Errorf("wallet is locked")
 	}
-
-	return
+	return nil
 }
 
 func getClient(
@@ -371,10 +385,6 @@ func getWalletStore(storeType, datadir string) (walletstore.WalletStore, error) 
 	default:
 		return nil, fmt.Errorf("unknown wallet store type")
 	}
-}
-
-func getCreatedAtFromExpiry(vtxoTreeExpiry common.RelativeLocktime, expiry time.Time) time.Time {
-	return expiry.Add(-time.Duration(vtxoTreeExpiry.Seconds()) * time.Second)
 }
 
 func filterByOutpoints(vtxos []client.Vtxo, outpoints []client.Outpoint) []client.Vtxo {

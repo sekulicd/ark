@@ -54,6 +54,11 @@ type covenantService struct {
 	currentRoundLock sync.Mutex
 	currentRound     *domain.Round
 	lastEvent        domain.RoundEvent
+
+	numOfBoardingInputs    int
+	numOfBoardingInputsMtx sync.RWMutex
+
+	forfeitsBoardingSigsChan chan struct{}
 }
 
 func NewCovenantService(
@@ -85,23 +90,24 @@ func NewCovenantService(
 	}
 
 	svc := &covenantService{
-		network:             network,
-		pubkey:              pubkey,
-		vtxoTreeExpiry:      vtxoTreeExpiry,
-		roundInterval:       roundInterval,
-		unilateralExitDelay: unilateralExitDelay,
-		boardingExitDelay:   boardingExitDelay,
-		wallet:              walletSvc,
-		repoManager:         repoManager,
-		builder:             builder,
-		scanner:             scanner,
-		sweeper:             newSweeper(walletSvc, repoManager, builder, scheduler, notificationPrefix),
-		txRequests:          newTxRequestsQueue(),
-		forfeitTxs:          newForfeitTxsMap(builder),
-		eventsCh:            make(chan domain.RoundEvent),
-		transactionEventsCh: make(chan TransactionEvent),
-		currentRoundLock:    sync.Mutex{},
-		nostrDefaultRelays:  nostrDefaultRelays,
+		network:                  network,
+		pubkey:                   pubkey,
+		vtxoTreeExpiry:           vtxoTreeExpiry,
+		roundInterval:            roundInterval,
+		unilateralExitDelay:      unilateralExitDelay,
+		boardingExitDelay:        boardingExitDelay,
+		wallet:                   walletSvc,
+		repoManager:              repoManager,
+		builder:                  builder,
+		scanner:                  scanner,
+		sweeper:                  newSweeper(walletSvc, repoManager, builder, scheduler, notificationPrefix),
+		txRequests:               newTxRequestsQueue(),
+		forfeitTxs:               newForfeitTxsMap(builder),
+		eventsCh:                 make(chan domain.RoundEvent),
+		transactionEventsCh:      make(chan TransactionEvent),
+		currentRoundLock:         sync.Mutex{},
+		nostrDefaultRelays:       nostrDefaultRelays,
+		forfeitsBoardingSigsChan: make(chan struct{}, 1),
 	}
 
 	repoManager.RegisterEventsHandler(
@@ -377,20 +383,65 @@ func (s *covenantService) SubmitRedeemTx(context.Context, string) (string, strin
 }
 
 func (s *covenantService) SignVtxos(ctx context.Context, forfeitTxs []string) error {
-	return s.forfeitTxs.sign(forfeitTxs)
+	if err := s.forfeitTxs.sign(forfeitTxs); err != nil {
+		return err
+	}
+
+	go func() {
+		s.currentRoundLock.Lock()
+		s.checkForfeitsAndBoardingSigsSent(s.currentRound)
+		s.currentRoundLock.Unlock()
+	}()
+
+	return nil
 }
 
 func (s *covenantService) SignRoundTx(ctx context.Context, signedRoundTx string) error {
 	s.currentRoundLock.Lock()
 	defer s.currentRoundLock.Unlock()
+	currentRound := s.currentRound
 
-	combined, err := s.builder.VerifyAndCombinePartialTx(s.currentRound.UnsignedTx, signedRoundTx)
+	combined, err := s.builder.VerifyAndCombinePartialTx(currentRound.UnsignedTx, signedRoundTx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to verify and combine partial tx: %s", err)
 	}
 
 	s.currentRound.UnsignedTx = combined
+
+	go func() {
+		s.currentRoundLock.Lock()
+		s.checkForfeitsAndBoardingSigsSent(s.currentRound)
+		s.currentRoundLock.Unlock()
+	}()
+
 	return nil
+}
+
+func (s *covenantService) checkForfeitsAndBoardingSigsSent(currentRound *domain.Round) {
+	roundTx, _ := psetv2.NewPsetFromBase64(currentRound.UnsignedTx)
+	numOfInputsSigned := 0
+	for _, v := range roundTx.Inputs {
+		if len(v.TapScriptSig) > 0 {
+			if len(v.TapScriptSig[0].Signature) > 0 {
+				numOfInputsSigned++
+			}
+		}
+	}
+
+	// Condition: all forfeit txs are signed and
+	// the number of signed boarding inputs matches
+	// numOfBoardingInputs we expect
+	s.numOfBoardingInputsMtx.RLock()
+	numOfBoardingInputs := s.numOfBoardingInputs
+	s.numOfBoardingInputsMtx.RUnlock()
+
+	if s.forfeitTxs.allSigned() && numOfBoardingInputs == numOfInputsSigned {
+		select {
+		case s.forfeitsBoardingSigsChan <- struct{}{}:
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
 }
 
 func (s *covenantService) ListVtxos(ctx context.Context, address string) ([]domain.Vtxo, []domain.Vtxo, error) {
@@ -659,6 +710,9 @@ func (s *covenantService) startFinalization(roundEndTime time.Time) {
 		log.WithError(err).Warn("failed to register tx requests")
 		return
 	}
+	s.numOfBoardingInputsMtx.Lock()
+	s.numOfBoardingInputs = len(boardingInputs)
+	s.numOfBoardingInputsMtx.Unlock()
 
 	sweptRounds, err := s.repoManager.Rounds().GetSweptRoundsConnectorAddress(ctx)
 	if err != nil {
@@ -675,11 +729,16 @@ func (s *covenantService) startFinalization(roundEndTime time.Time) {
 	}
 	log.Debugf("round tx created for round %s", round.Id)
 
-	s.forfeitTxs.init(connectors, requests)
+	if err := s.forfeitTxs.init(connectors, requests); err != nil {
+		round.Fail(fmt.Errorf("failed to initialize forfeit txs: %s", err))
+		log.WithError(err).Warn("failed to initialize forfeit txs")
+		return
+	}
 
-	if _, err := round.StartFinalization(
-		connectorAddress, connectors, tree, unsignedRoundTx,
-	); err != nil {
+	_, err = round.StartFinalization(
+		connectorAddress, connectors, tree, unsignedRoundTx, s.forfeitTxs.connectorsIndex,
+	)
+	if err != nil {
 		round.Fail(fmt.Errorf("failed to start finalization: %s", err))
 		log.WithError(err).Warn("failed to start finalization")
 		return
@@ -706,13 +765,11 @@ func (s *covenantService) finalizeRound(roundEndTime time.Time) {
 	}()
 
 	remainingTime := time.Until(roundEndTime)
-	// Wait for the remaining forfeit txs to be sent,
-	// but only wait until the round interval expires.
 	select {
-	case <-s.forfeitTxs.doneCh:
-		log.Debug("all forfeit txs have been sent")
+	case <-s.forfeitsBoardingSigsChan:
+		log.Debug("all forfeit txs and boarding inputs signatures have been sent")
 	case <-time.After(remainingTime):
-		log.Debug("timeout waiting for forfeit txs")
+		log.Debug("timeout waiting for forfeit txs and boarding inputs signatures")
 	}
 
 	forfeitTxs, err := s.forfeitTxs.pop()
@@ -766,6 +823,7 @@ func (s *covenantService) finalizeRound(roundEndTime time.Time) {
 	signedRoundTx, err = s.wallet.SignTransaction(ctx, signedRoundTx, true)
 	if err != nil {
 		changes = round.Fail(fmt.Errorf("failed to sign round tx: %s", err))
+		log.Debugf("failed to sign round tx: %s", signedRoundTx)
 		log.WithError(err).Warn("failed to sign round tx")
 		return
 	}
@@ -852,99 +910,6 @@ func (s *covenantService) listenToScannerNotifications() {
 	}
 }
 
-func (s *covenantService) getNextConnector(
-	ctx context.Context,
-	round domain.Round,
-) (string, uint32, error) {
-	lastConnectorPtx, err := psetv2.NewPsetFromBase64(round.Connectors[len(round.Connectors)-1])
-	if err != nil {
-		return "", 0, err
-	}
-
-	var connectorAmount uint64
-	for i := len(lastConnectorPtx.Outputs) - 1; i >= 0; i-- {
-		o := lastConnectorPtx.Outputs[i]
-		if len(o.Script) <= 0 {
-			continue //	skip the fee output
-		}
-
-		connectorAmount = o.Value
-		break
-	}
-
-	utxos, err := s.wallet.ListConnectorUtxos(ctx, round.ConnectorAddress)
-	if err != nil {
-		return "", 0, err
-	}
-	log.Debugf("found %d connector utxos, dust amount is %d", len(utxos), connectorAmount)
-
-	// if we do not find any utxos, we make sure to wait for the connector outpoint to be confirmed then we retry
-	if len(utxos) <= 0 {
-		if err := s.wallet.WaitForSync(ctx, round.Txid); err != nil {
-			return "", 0, err
-		}
-
-		utxos, err = s.wallet.ListConnectorUtxos(ctx, round.ConnectorAddress)
-		if err != nil {
-			return "", 0, err
-		}
-	}
-
-	// search for an already existing connector
-	for _, u := range utxos {
-		if u.GetValue() == connectorAmount {
-			return u.GetTxid(), u.GetIndex(), nil
-		}
-	}
-
-	for _, u := range utxos {
-		if u.GetValue() > connectorAmount {
-			for _, b64 := range round.Connectors {
-				partial, err := psetv2.NewPsetFromBase64(b64)
-				if err != nil {
-					return "", 0, err
-				}
-
-				for _, i := range partial.Inputs {
-					txhash, err := chainhash.NewHash(i.PreviousTxid)
-					if err != nil {
-						return "", 0, err
-					}
-
-					if txhash.String() == u.GetTxid() && i.PreviousTxIndex == u.GetIndex() {
-						connectorOutpoint := txOutpoint{u.GetTxid(), u.GetIndex()}
-
-						if err := s.wallet.LockConnectorUtxos(ctx, []ports.TxOutpoint{connectorOutpoint}); err != nil {
-							return "", 0, err
-						}
-
-						// sign & broadcast the connector tx
-						signedConnectorTx, err := s.wallet.SignTransaction(ctx, b64, true)
-						if err != nil {
-							return "", 0, err
-						}
-
-						connectorTxid, err := s.wallet.BroadcastTransaction(ctx, signedConnectorTx)
-						if err != nil {
-							return "", 0, err
-						}
-						log.Debugf("broadcasted connector tx %s", connectorTxid)
-
-						// wait for the connector tx to be in the mempool
-						if err := s.wallet.WaitForSync(ctx, connectorTxid); err != nil {
-							return "", 0, err
-						}
-
-						return connectorTxid, 0, nil
-					}
-				}
-			}
-		}
-	}
-
-	return "", 0, fmt.Errorf("no connector utxos found")
-}
-
 func (s *covenantService) reactToFraud(ctx context.Context, vtxo domain.Vtxo, mutx *sync.Mutex) error {
 	round, err := s.repoManager.Rounds().GetRoundWithTxid(ctx, vtxo.SpentBy)
 	if err != nil {
@@ -954,21 +919,56 @@ func (s *covenantService) reactToFraud(ctx context.Context, vtxo domain.Vtxo, mu
 	mutx.Lock()
 	defer mutx.Unlock()
 
-	connectorTxid, connectorVout, err := s.getNextConnector(ctx, *round)
-	if err != nil {
-		return fmt.Errorf("failed to retrieve next connector: %s", err)
-	}
-
-	forfeitTx, err := findForfeitTxLiquid(round.ForfeitTxs, connectorTxid, connectorVout, vtxo.Txid)
+	forfeitTx, err := findForfeitTxLiquid(round.ForfeitTxs, vtxo.VtxoKey)
 	if err != nil {
 		return fmt.Errorf("failed to find forfeit tx: %s", err)
 	}
 
-	if err := s.wallet.LockConnectorUtxos(ctx, []ports.TxOutpoint{txOutpoint{connectorTxid, connectorVout}}); err != nil {
+	forfeitUtx, err := forfeitTx.UnsignedTx()
+	if err != nil {
+		return fmt.Errorf("failed to get unsigned forfeit tx: %s", err)
+	}
+
+	connector := forfeitUtx.Inputs[0]
+	connectorOutpoint := txOutpoint{
+		chainhash.Hash(connector.Hash).String(),
+		connector.Index,
+	}
+
+	branch, err := round.Connectors.Branch(connectorOutpoint.txid)
+	if err != nil {
+		return fmt.Errorf("failed to get branch: %s", err)
+	}
+
+	for _, node := range branch {
+		_, err := s.wallet.GetTransaction(ctx, node.Txid)
+		if err != nil {
+			// TODO sign the tx
+			// transaction not found, it means we need to broadcast it
+			txHex, err := s.builder.FinalizeAndExtract(node.Tx)
+			if err != nil {
+				return fmt.Errorf("failed to finalize transaction: %s", err)
+			}
+
+			txid, err := s.wallet.BroadcastTransaction(ctx, txHex)
+			if err != nil {
+				return fmt.Errorf("failed to broadcast transaction: %s", err)
+			}
+
+			log.Debugf("broadcasted transaction %s", txid)
+		}
+	}
+
+	if err := s.wallet.LockConnectorUtxos(ctx, []ports.TxOutpoint{connectorOutpoint}); err != nil {
 		return fmt.Errorf("failed to lock connector utxos: %s", err)
 	}
 
-	signedForfeitTx, err := s.wallet.SignTransaction(ctx, forfeitTx, false)
+	forfeitTxB64, err := forfeitTx.ToBase64()
+	if err != nil {
+		return fmt.Errorf("failed to encode forfeit tx: %s", err)
+	}
+
+	signedForfeitTx, err := s.wallet.SignTransaction(ctx, forfeitTxB64, false)
 	if err != nil {
 		return fmt.Errorf("failed to sign connector input in forfeit tx: %s", err)
 	}
@@ -985,7 +985,6 @@ func (s *covenantService) reactToFraud(ctx context.Context, vtxo domain.Vtxo, mu
 
 	forfeitTxid, err := s.wallet.BroadcastTransaction(ctx, forfeitTxHex)
 	if err != nil {
-		log.Debug(forfeitTxHex)
 		return fmt.Errorf("failed to broadcast forfeit tx: %s", err)
 	}
 
@@ -1074,7 +1073,7 @@ func (s *covenantService) updateVtxoSet(round *domain.Round) {
 		}
 		s.transactionEventsCh <- RoundTransactionEvent{
 			RoundTxid:             round.Txid,
-			SpentVtxos:            getSpentVtxos(round.TxRequests),
+			SpentVtxos:            s.getSpentVtxos(round.TxRequests),
 			SpendableVtxos:        s.getNewVtxos(round),
 			ClaimedBoardingInputs: boardingInputs,
 		}
@@ -1086,11 +1085,13 @@ func (s *covenantService) propagateEvents(round *domain.Round) {
 	switch e := lastEvent.(type) {
 	case domain.RoundFinalizationStarted:
 		ev := domain.RoundFinalizationStarted{
-			Id:              e.Id,
-			VtxoTree:        e.VtxoTree,
-			Connectors:      e.Connectors,
-			RoundTx:         e.RoundTx,
-			MinRelayFeeRate: int64(s.wallet.MinRelayFeeRate(context.Background())),
+			Id:               e.Id,
+			VtxoTree:         e.VtxoTree,
+			Connectors:       e.Connectors,
+			RoundTx:          e.RoundTx,
+			MinRelayFeeRate:  int64(s.wallet.MinRelayFeeRate(context.Background())),
+			ConnectorAddress: e.ConnectorAddress,
+			ConnectorsIndex:  e.ConnectorsIndex,
 		}
 		s.lastEvent = ev
 		s.eventsCh <- ev
@@ -1148,6 +1149,12 @@ func (s *covenantService) getNewVtxos(round *domain.Round) []domain.Vtxo {
 			})
 		}
 	}
+	return vtxos
+}
+
+func (s *covenantService) getSpentVtxos(requests map[string]domain.TxRequest) []domain.Vtxo {
+	outpoints := getSpentVtxos(requests)
+	vtxos, _ := s.repoManager.Vtxos().GetVtxos(context.Background(), outpoints)
 	return vtxos
 }
 
@@ -1312,25 +1319,23 @@ func (s *covenantService) onchainNetwork() *network.Network {
 }
 
 func findForfeitTxLiquid(
-	forfeits []string, connectorTxid string, connectorVout uint32, vtxoTxid string,
-) (string, error) {
+	forfeits []string, vtxo domain.VtxoKey,
+) (*psetv2.Pset, error) {
 	for _, forfeit := range forfeits {
 		forfeitTx, err := psetv2.NewPsetFromBase64(forfeit)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
-		connector := forfeitTx.Inputs[0]
 		vtxoInput := forfeitTx.Inputs[1]
 
-		if chainhash.Hash(connector.PreviousTxid).String() == connectorTxid &&
-			connector.PreviousTxIndex == connectorVout &&
-			chainhash.Hash(vtxoInput.PreviousTxid).String() == vtxoTxid {
-			return forfeit, nil
+		if chainhash.Hash(vtxoInput.PreviousTxid).String() == vtxo.Txid &&
+			vtxoInput.PreviousTxIndex == vtxo.VOut {
+			return forfeitTx, nil
 		}
 	}
 
-	return "", fmt.Errorf("forfeit tx not found")
+	return nil, fmt.Errorf("forfeit tx not found")
 }
 
 func (s *covenantService) GetMarketHourConfig(ctx context.Context) (*domain.MarketHour, error) {

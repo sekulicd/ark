@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/ark-network/ark/common"
@@ -59,6 +60,7 @@ type TransportClient interface {
 }
 
 type Info struct {
+	Version                    string
 	PubKey                     string
 	VtxoTreeExpiry             int64
 	UnilateralExitDelay        int64
@@ -77,6 +79,10 @@ type RoundEventChannel struct {
 type Outpoint struct {
 	Txid string
 	VOut uint32
+}
+
+func (o Outpoint) String() string {
+	return fmt.Sprintf("%s:%d", o.Txid, o.VOut)
 }
 
 func (o Outpoint) Equals(other Outpoint) bool {
@@ -160,18 +166,19 @@ type Round struct {
 	StartedAt  *time.Time
 	EndedAt    *time.Time
 	Tx         string
-	Tree       tree.VtxoTree
+	Tree       tree.TxTree
 	ForfeitTxs []string
-	Connectors []string
+	Connectors tree.TxTree
 	Stage      RoundStage
 }
 
 type RoundFinalizationEvent struct {
 	ID              string
 	Tx              string
-	Tree            tree.VtxoTree
-	Connectors      []string
+	Tree            tree.TxTree
+	Connectors      tree.TxTree
 	MinRelayFeeRate chainfee.SatPerKVByte
+	ConnectorsIndex map[string]Outpoint // <txid:vout> -> outpoint
 }
 
 func (e RoundFinalizationEvent) isRoundEvent() {}
@@ -192,7 +199,7 @@ func (e RoundFailedEvent) isRoundEvent() {}
 
 type RoundSigningStartedEvent struct {
 	ID               string
-	UnsignedTree     tree.VtxoTree
+	UnsignedTree     tree.TxTree
 	UnsignedRoundTx  string
 	CosignersPubkeys []string
 }
@@ -214,14 +221,14 @@ type TransactionEvent struct {
 
 type RoundTransaction struct {
 	Txid                 string
-	SpentVtxos           []Outpoint
+	SpentVtxos           []Vtxo
 	SpendableVtxos       []Vtxo
 	ClaimedBoardingUtxos []Outpoint
 }
 
 type RedeemTransaction struct {
 	Txid           string
-	SpentVtxos     []Outpoint
+	SpentVtxos     []Vtxo
 	SpendableVtxos []Vtxo
 }
 

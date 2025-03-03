@@ -43,15 +43,34 @@ func (v VtxoKey) String() string {
 
 type Vtxo struct {
 	VtxoKey
-	Amount                  uint64
-	RoundTxid               string
-	ExpiresAt               time.Time
-	CreatedAt               time.Time
-	RedeemTx                string
-	UnconditionalForfeitTxs []string
-	Pending                 bool
-	SpentBy                 string
-	Spent                   bool
+	PubKey    string
+	Amount    uint64
+	RoundTxid string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	RedeemTx  string
+	Pending   bool
+	SpentBy   string
+	Spent     bool
+}
+
+type VtxoEventType int
+
+const (
+	VtxosAdded VtxoEventType = iota
+	VtxosSpent
+)
+
+func (e VtxoEventType) String() string {
+	return map[VtxoEventType]string{
+		VtxosAdded: "VTXOS_ADDED",
+		VtxosSpent: "VTXOS_SPENT",
+	}[e]
+}
+
+type VtxoEvent struct {
+	Type  VtxoEventType
+	Vtxos []Vtxo
 }
 
 const (
@@ -77,7 +96,6 @@ type Transaction struct {
 	Type      TxType
 	Settled   bool
 	CreatedAt time.Time
-	SpentBy   string
 }
 
 func (t Transaction) IsRound() bool {
@@ -97,19 +115,25 @@ func (t Transaction) String() string {
 	return string(buf)
 }
 
+type TxEventType int
+
 const (
-	BoardingPending EventType = "BOARDING_PENDING"
-	BoardingSettled EventType = "BOARDING_SETTLED"
-	OORSent         EventType = "OOR_SENT"
-	OORReceived     EventType = "OOR_RECEIVED"
-	OORSettled      EventType = "OOR_SETTLED"
+	TxsAdded TxEventType = iota
+	TxsSettled
+	TxsConfirmed
 )
 
-type EventType string
+func (e TxEventType) String() string {
+	return map[TxEventType]string{
+		TxsAdded:     "TXS_ADDED",
+		TxsSettled:   "TXS_SETTLED",
+		TxsConfirmed: "TXS_CONFIRMED",
+	}[e]
+}
 
 type TransactionEvent struct {
-	Tx    Transaction
-	Event EventType
+	Type TxEventType
+	Txs  []Transaction
 }
 
 type Utxo struct {

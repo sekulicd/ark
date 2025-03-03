@@ -34,7 +34,7 @@ type restClient struct {
 	svc            ark_service.ClientService
 	explorerSvc    explorer_service.ClientService
 	requestTimeout time.Duration
-	treeCache      *utils.Cache[tree.VtxoTree]
+	treeCache      *utils.Cache[tree.TxTree]
 }
 
 func NewClient(serverURL string) (client.TransportClient, error) {
@@ -51,7 +51,7 @@ func NewClient(serverURL string) (client.TransportClient, error) {
 	}
 	// TODO: use twice the round interval.
 	reqTimeout := 15 * time.Second
-	treeCache := utils.NewCache[tree.VtxoTree]()
+	treeCache := utils.NewCache[tree.TxTree]()
 
 	return &restClient{serverURL, svc, explorerSvc, reqTimeout, treeCache}, nil
 }
@@ -93,6 +93,7 @@ func (a *restClient) GetInfo(
 		Dust:                       uint64(dust),
 		BoardingDescriptorTemplate: resp.Payload.BoardingDescriptorTemplate,
 		ForfeitAddress:             resp.Payload.ForfeitAddress,
+		Version:                    resp.Payload.Version,
 	}, nil
 }
 
@@ -331,7 +332,8 @@ func (c *restClient) GetEventStream(
 					}
 				case resp.Result.RoundFinalization != nil:
 					e := resp.Result.RoundFinalization
-					tree := treeFromProto{e.VtxoTree}.parse()
+					vtxoTree := treeFromProto{e.VtxoTree}.parse()
+					connectorTree := treeFromProto{e.Connectors}.parse()
 
 					minRelayFeeRate, err := strconv.Atoi(e.MinRelayFeeRate)
 					if err != nil {
@@ -342,9 +344,10 @@ func (c *restClient) GetEventStream(
 					event = client.RoundFinalizationEvent{
 						ID:              e.ID,
 						Tx:              e.RoundTx,
-						Tree:            tree,
-						Connectors:      e.Connectors,
+						Tree:            vtxoTree,
+						Connectors:      connectorTree,
 						MinRelayFeeRate: chainfee.SatPerKVByte(minRelayFeeRate),
+						ConnectorsIndex: connectorsIndexFromProto{e.ConnectorsIndex}.parse(),
 					}
 				case resp.Result.RoundFinalized != nil:
 					e := resp.Result.RoundFinalized
@@ -443,7 +446,7 @@ func (a *restClient) GetRound(
 		Tx:         resp.Payload.Round.RoundTx,
 		Tree:       treeFromProto{resp.Payload.Round.VtxoTree}.parse(),
 		ForfeitTxs: resp.Payload.Round.ForfeitTxs,
-		Connectors: resp.Payload.Round.Connectors,
+		Connectors: treeFromProto{resp.Payload.Round.Connectors}.parse(),
 		Stage:      toRoundStage(*resp.Payload.Round.Stage),
 	}, nil
 }
@@ -482,7 +485,7 @@ func (a *restClient) GetRoundByID(
 		Tx:         resp.Payload.Round.RoundTx,
 		Tree:       treeFromProto{resp.Payload.Round.VtxoTree}.parse(),
 		ForfeitTxs: resp.Payload.Round.ForfeitTxs,
-		Connectors: resp.Payload.Round.Connectors,
+		Connectors: treeFromProto{resp.Payload.Round.Connectors}.parse(),
 		Stage:      toRoundStage(*resp.Payload.Round.Stage),
 	}, nil
 }
@@ -601,12 +604,27 @@ func toRoundStage(stage models.V1RoundStage) client.RoundStage {
 	}
 }
 
+type connectorsIndexFromProto struct {
+	connectorsIndex map[string]models.V1Outpoint
+}
+
+func (c connectorsIndexFromProto) parse() map[string]client.Outpoint {
+	connectorsIndex := make(map[string]client.Outpoint)
+	for vtxoOutpointStr, connectorOutpoint := range c.connectorsIndex {
+		connectorsIndex[vtxoOutpointStr] = client.Outpoint{
+			Txid: connectorOutpoint.Txid,
+			VOut: uint32(connectorOutpoint.Vout),
+		}
+	}
+	return connectorsIndex
+}
+
 type treeFromProto struct {
 	*models.V1Tree
 }
 
-func (t treeFromProto) parse() tree.VtxoTree {
-	vtxoTree := make(tree.VtxoTree, 0, len(t.Levels))
+func (t treeFromProto) parse() tree.TxTree {
+	vtxoTree := make(tree.TxTree, 0, len(t.Levels))
 	for _, l := range t.Levels {
 		level := make([]tree.Node, 0, len(l.Nodes))
 		for _, n := range l.Nodes {
@@ -670,7 +688,7 @@ func (c *restClient) GetTransactionsStream(ctx context.Context) (<-chan client.T
 			}
 
 			chunk = bytes.Trim(chunk, "\n")
-			resp := ark_service.ArkServiceGetTransactionsStreamOK{}
+			resp := ark_service.ArkServiceGetTransactionsStreamOKBody{}
 			if err := json.Unmarshal(chunk, &resp); err != nil {
 				eventsCh <- client.TransactionEvent{
 					Err: fmt.Errorf("failed to parse message from transaction stream: %s", err),
@@ -678,33 +696,29 @@ func (c *restClient) GetTransactionsStream(ctx context.Context) (<-chan client.T
 				return
 			}
 
-			if resp.Payload == nil {
-				continue
-			}
-
-			if resp.Payload.Error != nil {
+			if resp.Error != nil {
 				eventsCh <- client.TransactionEvent{
-					Err: fmt.Errorf("received error from transaction stream: %s", resp.Payload.Error.Message),
+					Err: fmt.Errorf("received error from transaction stream: %s", resp.Error.Message),
 				}
 				continue
 			}
 
 			var event client.TransactionEvent
-			if resp.Payload.Result.Round != nil {
+			if resp.Result.Round != nil {
 				event = client.TransactionEvent{
 					Round: &client.RoundTransaction{
-						Txid:                 resp.Payload.Result.Round.Txid,
-						SpentVtxos:           outpointsFromRest(resp.Payload.Result.Round.SpentVtxos),
-						SpendableVtxos:       vtxosFromRest(resp.Payload.Result.Round.SpendableVtxos),
-						ClaimedBoardingUtxos: outpointsFromRest(resp.Payload.Result.Round.ClaimedBoardingUtxos),
+						Txid:                 resp.Result.Round.Txid,
+						SpentVtxos:           vtxosFromRest(resp.Result.Round.SpentVtxos),
+						SpendableVtxos:       vtxosFromRest(resp.Result.Round.SpendableVtxos),
+						ClaimedBoardingUtxos: outpointsFromRest(resp.Result.Round.ClaimedBoardingUtxos),
 					},
 				}
-			} else if resp.Payload.Result.Redeem != nil {
+			} else if resp.Result.Redeem != nil {
 				event = client.TransactionEvent{
 					Redeem: &client.RedeemTransaction{
-						Txid:           resp.Payload.Result.Redeem.Txid,
-						SpentVtxos:     outpointsFromRest(resp.Payload.Result.Redeem.SpentVtxos),
-						SpendableVtxos: vtxosFromRest(resp.Payload.Result.Redeem.SpendableVtxos),
+						Txid:           resp.Result.Redeem.Txid,
+						SpentVtxos:     vtxosFromRest(resp.Result.Redeem.SpentVtxos),
+						SpendableVtxos: vtxosFromRest(resp.Result.Redeem.SpendableVtxos),
 					},
 				}
 			}

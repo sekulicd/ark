@@ -270,14 +270,16 @@ func generateBlock() error {
 }
 
 func logTxEvents(wallet string, client arksdk.ArkClient) {
-	txsChan := client.GetTransactionEventChannel()
+	txsChan := client.GetTransactionEventChannel(context.Background())
 	go func() {
 		for txEvent := range txsChan {
-			msg := fmt.Sprintf("[EVENT]%s: tx event: %s, %d", wallet, txEvent.Event, txEvent.Tx.Amount)
-			if txEvent.Tx.IsBoarding() {
-				msg += fmt.Sprintf(", boarding tx: %s", txEvent.Tx.BoardingTxid)
+			for _, tx := range txEvent.Txs {
+				msg := fmt.Sprintf(
+					"[EVENT]%s: tx %s type: %s, amount: %d",
+					wallet, tx.TransactionKey.String(), tx.Type, tx.Amount,
+				)
+				log.Infoln(msg)
 			}
-			log.Infoln(msg)
 		}
 	}()
 	log.Infof("%s tx event listener started", wallet)

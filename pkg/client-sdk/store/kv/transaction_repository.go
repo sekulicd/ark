@@ -2,10 +2,12 @@ package kvstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/ark-network/ark/pkg/client-sdk/types"
 	"github.com/dgraph-io/badger/v4"
@@ -39,61 +41,61 @@ func NewTransactionStore(
 
 func (s *txStore) AddTransactions(
 	_ context.Context, txs []types.Transaction,
-) error {
+) (int, error) {
+	count := 0
 	for _, tx := range txs {
 		if err := s.db.Insert(tx.TransactionKey.String(), &tx); err != nil {
-			return err
+			if errors.Is(err, badgerhold.ErrKeyExists) {
+				continue
+			}
+			return -1, err
 		}
-		go func(tx types.Transaction) {
-			var eventType types.EventType
-
-			if tx.IsOOR() {
-				switch tx.Type {
-				case types.TxSent:
-					eventType = types.OORSent
-				case types.TxReceived:
-					eventType = types.OORReceived
-				}
-			}
-
-			if tx.IsBoarding() {
-				eventType = types.BoardingPending
-			}
-
-			s.sendEvent(types.TransactionEvent{
-				Tx:    tx,
-				Event: eventType,
-			})
-		}(tx)
+		count++
 	}
-	return nil
+
+	go s.sendEvent(types.TransactionEvent{Type: types.TxsAdded, Txs: txs})
+
+	return count, nil
 }
 
-func (s *txStore) UpdateTransactions(
-	_ context.Context, txs []types.Transaction,
-) error {
-	for _, tx := range txs {
-		if err := s.db.Upsert(tx.TransactionKey.String(), &tx); err != nil {
-			return err
-		}
-		go func(tx types.Transaction) {
-			var event types.EventType
-
-			if tx.IsOOR() {
-				event = types.OORSettled
-			}
-
-			if tx.IsBoarding() {
-				event = types.BoardingSettled
-			}
-
-			s.sendEvent(types.TransactionEvent{
-				Tx:    tx,
-				Event: event,
-			})
-		}(tx)
+func (s *txStore) SettleTransactions(
+	ctx context.Context, txids []string,
+) (int, error) {
+	txs, err := s.GetTransactions(ctx, txids)
+	if err != nil {
+		return -1, err
 	}
-	return nil
+
+	for _, tx := range txs {
+		tx.Settled = true
+		if err := s.db.Upsert(tx.TransactionKey.String(), &tx); err != nil {
+			return -1, err
+		}
+	}
+
+	go s.sendEvent(types.TransactionEvent{Type: types.TxsSettled, Txs: txs})
+
+	return len(txs), nil
+}
+
+func (s *txStore) ConfirmTransactions(
+	ctx context.Context, txids []string, timestamp time.Time,
+) (int, error) {
+	txs, err := s.GetTransactions(ctx, txids)
+	if err != nil {
+		return -1, err
+	}
+
+	for _, tx := range txs {
+		tx.CreatedAt = timestamp
+		if err := s.db.Upsert(tx.TransactionKey.String(), &tx); err != nil {
+			return -1, err
+		}
+	}
+
+	go s.sendEvent(types.TransactionEvent{Type: types.TxsConfirmed, Txs: txs})
+
+	return len(txs), nil
 }
 
 func (s *txStore) GetAllTransactions(
@@ -114,6 +116,24 @@ func (s *txStore) GetAllTransactions(
 	return txs, err
 }
 
+func (s *txStore) GetTransactions(
+	_ context.Context, txids []string,
+) ([]types.Transaction, error) {
+	txs := make([]types.Transaction, 0, len(txids))
+	for _, txid := range txids {
+		var tx types.Transaction
+		if err := s.db.Get(txid, &tx); err != nil {
+			if errors.Is(err, badgerhold.ErrNotFound) {
+				continue
+			}
+
+			return nil, err
+		}
+		txs = append(txs, tx)
+	}
+	return txs, nil
+}
+
 func (s *txStore) GetEventChannel() chan types.TransactionEvent {
 	return s.eventCh
 }
@@ -129,5 +149,10 @@ func (s *txStore) sendEvent(event types.TransactionEvent) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	s.eventCh <- event
+	select {
+	case s.eventCh <- event:
+		return
+	default:
+		time.Sleep(100 * time.Millisecond)
+	}
 }

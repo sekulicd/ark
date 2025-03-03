@@ -28,7 +28,7 @@ type service struct {
 type grpcClient struct {
 	conn      *grpc.ClientConn
 	svc       service
-	treeCache *utils.Cache[tree.VtxoTree]
+	treeCache *utils.Cache[tree.TxTree]
 }
 
 func NewClient(serverUrl string) (client.TransportClient, error) {
@@ -57,7 +57,7 @@ func NewClient(serverUrl string) (client.TransportClient, error) {
 	}
 
 	svc := service{arkv1.NewArkServiceClient(conn), arkv1.NewExplorerServiceClient(conn)}
-	treeCache := utils.NewCache[tree.VtxoTree]()
+	treeCache := utils.NewCache[tree.TxTree]()
 
 	return &grpcClient{conn, svc, treeCache}, nil
 }
@@ -77,6 +77,7 @@ func (a *grpcClient) GetInfo(ctx context.Context) (*client.Info, error) {
 		Dust:                       uint64(resp.GetDust()),
 		BoardingDescriptorTemplate: resp.GetBoardingDescriptorTemplate(),
 		ForfeitAddress:             resp.GetForfeitAddress(),
+		Version:                    resp.GetVersion(),
 	}, nil
 }
 
@@ -293,7 +294,7 @@ func (a *grpcClient) GetRound(
 		Tx:         round.GetRoundTx(),
 		Tree:       treeFromProto{round.GetVtxoTree()}.parse(),
 		ForfeitTxs: round.GetForfeitTxs(),
-		Connectors: round.GetConnectors(),
+		Connectors: treeFromProto{round.GetConnectors()}.parse(),
 		Stage:      client.RoundStage(int(round.GetStage())),
 	}, nil
 }
@@ -321,7 +322,7 @@ func (a *grpcClient) GetRoundByID(
 		Tx:         round.GetRoundTx(),
 		Tree:       tree,
 		ForfeitTxs: round.GetForfeitTxs(),
-		Connectors: round.GetConnectors(),
+		Connectors: treeFromProto{round.GetConnectors()}.parse(),
 		Stage:      client.RoundStage(int(round.GetStage())),
 	}, nil
 }
@@ -368,7 +369,7 @@ func (c *grpcClient) GetTransactionsStream(
 				eventCh <- client.TransactionEvent{
 					Round: &client.RoundTransaction{
 						Txid:                 tx.Round.Txid,
-						SpentVtxos:           outpointsFromProto(tx.Round.SpentVtxos),
+						SpentVtxos:           vtxos(tx.Round.SpentVtxos).toVtxos(),
 						SpendableVtxos:       vtxos(tx.Round.SpendableVtxos).toVtxos(),
 						ClaimedBoardingUtxos: outpointsFromProto(tx.Round.ClaimedBoardingUtxos),
 					},
@@ -377,7 +378,7 @@ func (c *grpcClient) GetTransactionsStream(
 				eventCh <- client.TransactionEvent{
 					Redeem: &client.RedeemTransaction{
 						Txid:           tx.Redeem.Txid,
-						SpentVtxos:     outpointsFromProto(tx.Redeem.SpentVtxos),
+						SpentVtxos:     vtxos(tx.Redeem.SpentVtxos).toVtxos(),
 						SpendableVtxos: vtxos(tx.Redeem.SpendableVtxos).toVtxos(),
 					},
 				}
