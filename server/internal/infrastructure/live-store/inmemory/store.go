@@ -4,11 +4,6 @@ import (
 	"github.com/ark-network/ark/server/internal/core/ports"
 )
 
-const (
-	selectGapMinutes = float64(1)
-	deleteGapMinutes = float64(5)
-)
-
 func NewLiveStore(txBuilder ports.TxBuilder) ports.LiveStore {
 	return &inMemoryLiveStore{
 		txRequestsStore:           NewTxRequestsStore(),
