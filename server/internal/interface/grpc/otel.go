@@ -39,7 +39,7 @@ var arkRuntimeMetrics = []string{
 	"/gc/heap/frees:bytes",
 }
 
-func initOtelSDK(ctx context.Context, otelCollectorUrl string) (func(context.Context) error, error) {
+func initOtelSDK(ctx context.Context, otelCollectorUrl string, pushInterval time.Duration) (func(context.Context) error, error) {
 	otelCollectorUrl = strings.TrimSuffix(otelCollectorUrl, "/")
 	traceExp, err := traceExport.New(
 		ctx,
@@ -70,7 +70,7 @@ func initOtelSDK(ctx context.Context, otelCollectorUrl string) (func(context.Con
 
 	reader := sdkmetric.NewPeriodicReader(
 		metricExp,
-		sdkmetric.WithInterval(10*time.Second),
+		sdkmetric.WithInterval(pushInterval),
 	)
 
 	mp := sdkmetric.NewMeterProvider(

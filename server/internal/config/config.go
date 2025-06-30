@@ -92,6 +92,7 @@ type Config struct {
 	MarketHourPeriod        time.Duration
 	MarketHourRoundInterval time.Duration
 	OtelCollectorEndpoint   string
+	OtelPushInterval        time.Duration
 
 	EsploraURL string
 
@@ -158,6 +159,7 @@ var (
 	MarketHourPeriod          = "MARKET_HOUR_PERIOD"
 	MarketHourRoundInterval   = "MARKET_HOUR_ROUND_INTERVAL"
 	OtelCollectorEndpoint     = "OTEL_COLLECTOR_ENDPOINT"
+	OtelPushInterval          = "OTEL_PUSH_INTERVAL"
 	RoundMaxParticipantsCount = "ROUND_MAX_PARTICIPANTS_COUNT"
 	RoundMinParticipantsCount = "ROUND_MIN_PARTICIPANTS_COUNT"
 	UtxoMaxAmount             = "UTXO_MAX_AMOUNT"
@@ -194,6 +196,7 @@ var (
 
 	defaultRoundMaxParticipantsCount = 128
 	defaultRoundMinParticipantsCount = 1
+	defaultOtelPushInterval          = time.Duration(10) * time.Second
 )
 
 func LoadConfig() (*Config, error) {
@@ -227,6 +230,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault(LiveStoreType, defaultLiveStoreType)
 	viper.SetDefault(RedisTxNumOfRetries, defaultRedisTxNumOfRetries)
 	viper.SetDefault(AllowCSVBlockType, defaultAllowCSVBlockType)
+	viper.SetDefault(OtelPushInterval, defaultOtelPushInterval)
 
 	if err := initDatadir(); err != nil {
 		return nil, fmt.Errorf("error while creating datadir: %s", err)
@@ -264,39 +268,41 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		Datadir:                   viper.GetString(Datadir),
-		WalletAddr:                viper.GetString(WalletAddr),
-		RoundInterval:             viper.GetInt64(RoundInterval),
-		Port:                      viper.GetUint32(Port),
-		EventDbType:               viper.GetString(EventDbType),
-		DbType:                    viper.GetString(DbType),
-		SchedulerType:             viper.GetString(SchedulerType),
-		TxBuilderType:             viper.GetString(TxBuilderType),
-		LiveStoreType:             viper.GetString(LiveStoreType),
-		RedisUrl:                  redisUrl,
-		RedisTxNumOfRetries:       viper.GetInt(RedisTxNumOfRetries),
-		NoTLS:                     viper.GetBool(NoTLS),
-		DbDir:                     dbPath,
-		DbUrl:                     dbUrl,
-		EventDbDir:                dbPath,
-		EventDbUrl:                eventDbUrl,
-		LogLevel:                  viper.GetInt(LogLevel),
-		VtxoTreeExpiry:            determineLocktimeType(viper.GetInt64(VtxoTreeExpiry)),
-		UnilateralExitDelay:       determineLocktimeType(viper.GetInt64(UnilateralExitDelay)),
-		BoardingExitDelay:         determineLocktimeType(viper.GetInt64(BoardingExitDelay)),
-		EsploraURL:                viper.GetString(EsploraURL),
-		NoMacaroons:               viper.GetBool(NoMacaroons),
-		TLSExtraIPs:               viper.GetStringSlice(TLSExtraIP),
-		TLSExtraDomains:           viper.GetStringSlice(TLSExtraDomain),
-		UnlockerType:              viper.GetString(UnlockerType),
-		UnlockerFilePath:          viper.GetString(UnlockerFilePath),
-		UnlockerPassword:          viper.GetString(UnlockerPassword),
-		NoteUriPrefix:             viper.GetString(NoteUriPrefix),
-		MarketHourStartTime:       viper.GetTime(MarketHourStartTime),
-		MarketHourEndTime:         viper.GetTime(MarketHourEndTime),
-		MarketHourPeriod:          viper.GetDuration(MarketHourPeriod),
-		MarketHourRoundInterval:   viper.GetDuration(MarketHourRoundInterval),
-		OtelCollectorEndpoint:     viper.GetString(OtelCollectorEndpoint),
+		Datadir:                 viper.GetString(Datadir),
+		WalletAddr:              viper.GetString(WalletAddr),
+		RoundInterval:           viper.GetInt64(RoundInterval),
+		Port:                    viper.GetUint32(Port),
+		EventDbType:             viper.GetString(EventDbType),
+		DbType:                  viper.GetString(DbType),
+		SchedulerType:           viper.GetString(SchedulerType),
+		TxBuilderType:           viper.GetString(TxBuilderType),
+		LiveStoreType:           viper.GetString(LiveStoreType),
+		RedisUrl:                redisUrl,
+		RedisTxNumOfRetries:     viper.GetInt(RedisTxNumOfRetries),
+		NoTLS:                   viper.GetBool(NoTLS),
+		DbDir:                   dbPath,
+		DbUrl:                   dbUrl,
+		EventDbDir:              dbPath,
+		EventDbUrl:              eventDbUrl,
+		LogLevel:                viper.GetInt(LogLevel),
+		VtxoTreeExpiry:          determineLocktimeType(viper.GetInt64(VtxoTreeExpiry)),
+		UnilateralExitDelay:     determineLocktimeType(viper.GetInt64(UnilateralExitDelay)),
+		BoardingExitDelay:       determineLocktimeType(viper.GetInt64(BoardingExitDelay)),
+		EsploraURL:              viper.GetString(EsploraURL),
+		NoMacaroons:             viper.GetBool(NoMacaroons),
+		TLSExtraIPs:             viper.GetStringSlice(TLSExtraIP),
+		TLSExtraDomains:         viper.GetStringSlice(TLSExtraDomain),
+		UnlockerType:            viper.GetString(UnlockerType),
+		UnlockerFilePath:        viper.GetString(UnlockerFilePath),
+		UnlockerPassword:        viper.GetString(UnlockerPassword),
+		NoteUriPrefix:           viper.GetString(NoteUriPrefix),
+		MarketHourStartTime:     viper.GetTime(MarketHourStartTime),
+		MarketHourEndTime:       viper.GetTime(MarketHourEndTime),
+		MarketHourPeriod:        viper.GetDuration(MarketHourPeriod),
+		MarketHourRoundInterval: viper.GetDuration(MarketHourRoundInterval),
+		OtelCollectorEndpoint:   viper.GetString(OtelCollectorEndpoint),
+		OtelPushInterval:        viper.GetDuration(OtelPushInterval),
+
 		RoundMaxParticipantsCount: viper.GetInt64(RoundMaxParticipantsCount),
 		RoundMinParticipantsCount: viper.GetInt64(RoundMinParticipantsCount),
 		UtxoMaxAmount:             viper.GetInt64(UtxoMaxAmount),

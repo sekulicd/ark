@@ -40,7 +40,6 @@ services:
       - ARK_LIVE_STORE_TYPE=inmemory
       - ARK_EVENT_DB_TYPE=badger
       - ARK_DB_TYPE=sqlite
-      - ARK_OTEL_COLLECTOR_ENDPOINT=http://otel-collector:4318
     volumes:
       - type: tmpfs
         target: /app/data
