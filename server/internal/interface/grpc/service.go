@@ -165,7 +165,7 @@ func (s *service) stop(withAppSvc bool) {
 
 func (s *service) newServer(tlsConfig *tls.Config, withAppSvc bool) error {
 	if s.appConfig.OtelCollectorEndpoint != "" {
-		otelShutdown, err := initOtelSDK(context.Background(), s.appConfig.OtelCollectorEndpoint)
+		otelShutdown, err := initOtelSDK(context.Background(), s.appConfig.OtelCollectorEndpoint, s.appConfig.OtelPushInterval)
 		if err != nil {
 			return err
 		}
