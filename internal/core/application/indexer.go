@@ -231,7 +231,7 @@ func (i *indexerService) GetVtxoChain(
 
 		newNextVtxos := make([]domain.Outpoint, 0)
 		for _, vtxo := range vtxos {
-			key := fmt.Sprintf("%s:%d", vtxo.Txid, vtxo.VOut)
+			key := vtxo.Outpoint.String()
 			if visited[key] {
 				continue
 			}
@@ -272,8 +272,7 @@ func (i *indexerService) GetVtxoChain(
 
 					// populate newNextVtxos with checkpoints inputs
 					for _, in := range ptx.UnsignedTx.TxIn {
-						childKey := fmt.Sprintf("%s:%d", in.PreviousOutPoint.Hash.String(), in.PreviousOutPoint.Index)
-						if !visited[childKey] {
+						if !visited[in.PreviousOutPoint.String()] {
 							newNextVtxos = append(newNextVtxos, domain.Outpoint{
 								Txid: in.PreviousOutPoint.Hash.String(),
 								VOut: in.PreviousOutPoint.Index,
