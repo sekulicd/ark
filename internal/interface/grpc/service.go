@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/arkade-os/arkd/internal/telemetry"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -167,7 +168,12 @@ func (s *service) newServer(tlsConfig *tls.Config, withAppSvc bool) error {
 	ctx := context.Background()
 	if s.appConfig.OtelCollectorEndpoint != "" {
 		pushInteval := time.Duration(s.appConfig.OtelPushInterval) * time.Second
-		otelShutdown, err := initOtelSDK(ctx, s.appConfig.OtelCollectorEndpoint, pushInteval)
+		rrsc, err := s.appConfig.RoundReportService()
+		if err != nil {
+			return err
+		}
+
+		otelShutdown, err := telemetry.InitOtelSDK(ctx, s.appConfig.OtelCollectorEndpoint, pushInteval, rrsc)
 		if err != nil {
 			return err
 		}

@@ -39,6 +39,8 @@ services:
       - ARKD_LIVE_STORE_TYPE=inmemory
       - ARKD_EVENT_DB_TYPE=badger
       - ARKD_DB_TYPE=sqlite
+      - ARKD_OTEL_COLLECTOR_ENDPOINT=http://otel-collector:4318
+      - ARKD_ROUND_REPORT_ENABLED=true
     volumes:
       - type: tmpfs
         target: /app/data

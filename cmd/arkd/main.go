@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/arkade-os/arkd/internal/telemetry"
 	"os"
 	"os/signal"
 	"syscall"
@@ -29,6 +30,9 @@ func mainAction(_ *cli.Context) error {
 	}
 
 	log.SetLevel(log.Level(cfg.LogLevel))
+	if cfg.OtelCollectorEndpoint != "" {
+		log.AddHook(telemetry.NewOTelHook())
+	}
 
 	svcConfig := grpcservice.Config{
 		Datadir:         cfg.Datadir,

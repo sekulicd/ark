@@ -25,3 +25,11 @@ func (h *healthHandler) Watch(
 ) error {
 	return nil
 }
+
+func (h *healthHandler) List(
+	_ context.Context, _ *grpchealth.HealthListRequest,
+) (*grpchealth.HealthListResponse, error) {
+	return &grpchealth.HealthListResponse{
+		Statuses: nil,
+	}, nil
+}
