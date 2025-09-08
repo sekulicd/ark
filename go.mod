@@ -8,7 +8,7 @@ replace github.com/arkade-os/arkd/api-spec => ./api-spec
 
 replace github.com/arkade-os/arkd/pkg/ark-lib => ./pkg/ark-lib
 
-replace github.com/arkade-os/arkd/pkg/arkd-wallet-nbxplorer => ./pkg/arkd-wallet-nbxplorer
+replace github.com/arkade-os/arkd/pkg/arkd-wallet-btcwallet => ./pkg/arkd-wallet-btcwallet
 
 replace github.com/arkade-os/arkd/pkg/arkd-wallet => ./pkg/arkd-wallet
 
@@ -21,7 +21,7 @@ require (
 	github.com/arkade-os/arkd/api-spec v0.0.0-20250822193207-98c5ced2c36c
 	github.com/arkade-os/arkd/pkg/ark-lib v0.7.1-0.20250829143400-715eeb5fa442
 	github.com/arkade-os/arkd/pkg/arkd-wallet v0.0.0-00010101000000-000000000000
-	github.com/arkade-os/arkd/pkg/arkd-wallet-nbxplorer v0.0.0-00010101000000-000000000000
+	github.com/arkade-os/arkd/pkg/arkd-wallet-btcwallet v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/arkd/pkg/kvdb v0.0.0-20250606113434-241d3e1ec7cb
 	github.com/arkade-os/arkd/pkg/macaroons v0.0.0-00010101000000-000000000000
 	github.com/arkade-os/go-sdk v0.6.3-0.20250829144939-3a6e854ed8b8
