@@ -83,7 +83,11 @@ func (s *sweeper) start() error {
 			count++
 		}
 
-		log.Infof("sweeper: scheduled sweeping for %d batches", count)
+		if count > 0 {
+			log.Infof("sweeper: scheduled sweep of %d batches", count)
+		} else {
+			log.Info("sweeper: no batches to sweep, no sweep tasks to schedule")
+		}
 	}
 
 	return nil
