@@ -454,7 +454,8 @@ func TestReactToRedemptionOfRefreshedVtxos(t *testing.T) {
 		}
 	}
 
-	expl := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	expl, err := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
 
 	branch, err := redemption.NewRedeemBranch(ctx, expl, indexerSvc, vtxo)
 	require.NoError(t, err)
@@ -549,7 +550,8 @@ func TestReactToRedemptionOfVtxosSpentAsync(t *testing.T) {
 		}
 		require.NotEmpty(t, vtxo)
 
-		expl := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+		expl, err := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+		require.NoError(t, err)
 
 		branch, err := redemption.NewRedeemBranch(ctx, expl, indexerSvc, vtxo)
 		require.NoError(t, err)
@@ -782,7 +784,8 @@ func TestReactToRedemptionOfVtxosSpentAsync(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		explorer := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+		explorer, err := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+		require.NoError(t, err)
 
 		encodedArkTx, err := ptx.B64Encode()
 		require.NoError(t, err)
@@ -1427,7 +1430,8 @@ func TestSendToCLTVMultisigClosure(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	explorer := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
 
 	encodedVirtualTx, err := ptx.B64Encode()
 	require.NoError(t, err)
@@ -1704,7 +1708,8 @@ func TestSendToConditionMultisigClosure(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	explorer := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	explorer, err := explorer.NewExplorer("http://localhost:3000", arklib.BitcoinRegTest)
+	require.NoError(t, err)
 
 	encodedVirtualTx, err := ptx.B64Encode()
 	require.NoError(t, err)
