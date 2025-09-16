@@ -11,7 +11,6 @@ import (
 
 type RoundReportLogExporter struct {
 	cancel context.CancelFunc
-	done   chan struct{}
 	logger otelLog.Logger
 }
 
@@ -22,13 +21,11 @@ func newRoundReportLogExporter(ctx context.Context, svc application.RoundReportS
 	runCtx, cancel := context.WithCancel(ctx)
 	e := &RoundReportLogExporter{
 		cancel: cancel,
-		done:   make(chan struct{}),
 		logger: logger,
 	}
 
 	ch := svc.Report()
 	go func() {
-		defer close(e.done)
 		for {
 			select {
 			case <-runCtx.Done():
@@ -45,94 +42,96 @@ func newRoundReportLogExporter(ctx context.Context, svc application.RoundReportS
 	return e, nil
 }
 
+type roundStats struct {
+	RoundID string                 `json:"round_id"`
+	Stats   application.RoundStats `json:"round_stats"`
+	Metrics struct {
+		LatencySec           float64 `json:"latency_sec"`
+		CPUSec               float64 `json:"cpu_sec"`
+		CoreEq               float64 `json:"core_eq"`
+		UtilizedPct          float64 `json:"utilized_pct"`
+		MemAllocDeltaMB      float64 `json:"mem_alloc_delta_mb"`
+		MemSysDeltaMB        float64 `json:"mem_sys_delta_mb"`
+		MemTotalAllocDeltaMB float64 `json:"mem_total_alloc_delta_mb"`
+		GCDelta              uint32  `json:"gc_delta"`
+	} `json:"round_metrics"`
+	Stages map[string]struct {
+		LatencySec float64 `json:"latency_sec"`
+	} `json:"stages"`
+	Ops map[string]struct {
+		LatencySec           float64 `json:"latency_sec"`
+		CPUSec               float64 `json:"cpu_sec"`
+		CoreEq               float64 `json:"core_eq"`
+		UtilizedPct          float64 `json:"utilized_pct"`
+		MemAllocDeltaMB      float64 `json:"mem_alloc_delta_mb"`
+		MemSysDeltaMB        float64 `json:"mem_sys_delta_mb"`
+		MemTotalAllocDeltaMB float64 `json:"mem_total_alloc_delta_mb"`
+		GCDelta              uint32  `json:"gc_delta"`
+	} `json:"ops"`
+}
+
 func (e *RoundReportLogExporter) emit(ctx context.Context, rep *application.RoundReport) {
-	roundStats := struct {
-		RoundID string                             `json:"round_id"`
-		Stats   application.RoundStats             `json:"round_stats"`
-		Metrics struct {
-			LatencySec             float64       `json:"latency_sec"`
-			CPUSec                 float64       `json:"cpu_sec"`
-			CoreEq                 float64       `json:"core_eq"`
-			UtilizedPct            float64       `json:"utilized_pct"`
-			MemAllocDeltaMB        float64       `json:"mem_alloc_delta_mb"`
-			MemSysDeltaMB          float64       `json:"mem_sys_delta_mb"`
-			MemTotalAllocDeltaMB   float64       `json:"mem_total_alloc_delta_mb"`
-			GCDelta                uint32        `json:"gc_delta"`
-		} `json:"round_metrics"`
-		Stages  map[string]struct {
-			LatencySec float64 `json:"latency_sec"`
-		} `json:"stages"`
-		Ops     map[string]struct {
-			LatencySec             float64       `json:"latency_sec"`
-			CPUSec                 float64       `json:"cpu_sec"`
-			CoreEq                 float64       `json:"core_eq"`
-			UtilizedPct            float64       `json:"utilized_pct"`
-			MemAllocDeltaMB        float64       `json:"mem_alloc_delta_mb"`
-			MemSysDeltaMB          float64       `json:"mem_sys_delta_mb"`
-			MemTotalAllocDeltaMB   float64       `json:"mem_total_alloc_delta_mb"`
-			GCDelta                uint32        `json:"gc_delta"`
-		} `json:"ops"`
-	}{
+	rs := roundStats{
 		RoundID: rep.RoundID,
 		Stats:   rep.Stats,
 	}
-	
+
 	// Copy metrics with unit-aware field names
-	roundStats.Metrics.LatencySec = rep.Metrics.Latency
-	roundStats.Metrics.CPUSec = rep.Metrics.CPU
-	roundStats.Metrics.CoreEq = rep.Metrics.CoreEq
-	roundStats.Metrics.UtilizedPct = rep.Metrics.UtilizedPct
-	roundStats.Metrics.MemAllocDeltaMB = rep.Metrics.MemAllocDelta
-	roundStats.Metrics.MemSysDeltaMB = rep.Metrics.MemSysDelta
-	roundStats.Metrics.MemTotalAllocDeltaMB = rep.Metrics.MemTotalAllocDelta
-	roundStats.Metrics.GCDelta = rep.Metrics.GCDelta
-	
+	rs.Metrics.LatencySec = rep.Metrics.Latency
+	rs.Metrics.CPUSec = rep.Metrics.CPU
+	rs.Metrics.CoreEq = rep.Metrics.CoreEq
+	rs.Metrics.UtilizedPct = rep.Metrics.UtilizedPct
+	rs.Metrics.MemAllocDeltaMB = rep.Metrics.MemAllocDelta
+	rs.Metrics.MemSysDeltaMB = rep.Metrics.MemSysDelta
+	rs.Metrics.MemTotalAllocDeltaMB = rep.Metrics.MemTotalAllocDelta
+	rs.Metrics.GCDelta = rep.Metrics.GCDelta
+
 	// Copy stages with unit-aware field names
-	roundStats.Stages = make(map[string]struct {
+	rs.Stages = make(map[string]struct {
 		LatencySec float64 `json:"latency_sec"`
 	})
 	for stageName, stageMetric := range rep.Stages {
-		roundStats.Stages[stageName] = struct {
+		rs.Stages[stageName] = struct {
 			LatencySec float64 `json:"latency_sec"`
 		}{
 			LatencySec: stageMetric.Latency,
 		}
 	}
-	
+
 	// Copy ops with unit-aware field names
-	roundStats.Ops = make(map[string]struct {
-		LatencySec             float64       `json:"latency_sec"`
-		CPUSec                 float64       `json:"cpu_sec"`
-		CoreEq                 float64       `json:"core_eq"`
-		UtilizedPct            float64       `json:"utilized_pct"`
-		MemAllocDeltaMB        float64       `json:"mem_alloc_delta_mb"`
-		MemSysDeltaMB          float64       `json:"mem_sys_delta_mb"`
-		MemTotalAllocDeltaMB   float64       `json:"mem_total_alloc_delta_mb"`
-		GCDelta                uint32        `json:"gc_delta"`
+	rs.Ops = make(map[string]struct {
+		LatencySec           float64 `json:"latency_sec"`
+		CPUSec               float64 `json:"cpu_sec"`
+		CoreEq               float64 `json:"core_eq"`
+		UtilizedPct          float64 `json:"utilized_pct"`
+		MemAllocDeltaMB      float64 `json:"mem_alloc_delta_mb"`
+		MemSysDeltaMB        float64 `json:"mem_sys_delta_mb"`
+		MemTotalAllocDeltaMB float64 `json:"mem_total_alloc_delta_mb"`
+		GCDelta              uint32  `json:"gc_delta"`
 	})
 	for opName, opMetric := range rep.Ops {
-		roundStats.Ops[opName] = struct {
-			LatencySec             float64       `json:"latency_sec"`
-			CPUSec                 float64       `json:"cpu_sec"`
-			CoreEq                 float64       `json:"core_eq"`
-			UtilizedPct            float64       `json:"utilized_pct"`
-			MemAllocDeltaMB        float64       `json:"mem_alloc_delta_mb"`
-			MemSysDeltaMB          float64       `json:"mem_sys_delta_mb"`
-			MemTotalAllocDeltaMB   float64       `json:"mem_total_alloc_delta_mb"`
-			GCDelta                uint32        `json:"gc_delta"`
+		rs.Ops[opName] = struct {
+			LatencySec           float64 `json:"latency_sec"`
+			CPUSec               float64 `json:"cpu_sec"`
+			CoreEq               float64 `json:"core_eq"`
+			UtilizedPct          float64 `json:"utilized_pct"`
+			MemAllocDeltaMB      float64 `json:"mem_alloc_delta_mb"`
+			MemSysDeltaMB        float64 `json:"mem_sys_delta_mb"`
+			MemTotalAllocDeltaMB float64 `json:"mem_total_alloc_delta_mb"`
+			GCDelta              uint32  `json:"gc_delta"`
 		}{
-			LatencySec:             opMetric.Latency,
-			CPUSec:                 opMetric.CPU,
-			CoreEq:                 opMetric.CoreEq,
-			UtilizedPct:            opMetric.UtilizedPct,
-			MemAllocDeltaMB:        opMetric.MemAllocDelta,
-			MemSysDeltaMB:          opMetric.MemSysDelta,
-			MemTotalAllocDeltaMB:   opMetric.MemTotalAllocDelta,
-			GCDelta:                opMetric.GCDelta,
+			LatencySec:           opMetric.Latency,
+			CPUSec:               opMetric.CPU,
+			CoreEq:               opMetric.CoreEq,
+			UtilizedPct:          opMetric.UtilizedPct,
+			MemAllocDeltaMB:      opMetric.MemAllocDelta,
+			MemSysDeltaMB:        opMetric.MemSysDelta,
+			MemTotalAllocDeltaMB: opMetric.MemTotalAllocDelta,
+			GCDelta:              opMetric.GCDelta,
 		}
 	}
 
-	raw, _ := json.Marshal(roundStats)
+	raw, _ := json.Marshal(rs)
 
 	var rec otelLog.Record
 	rec.SetObservedTimestamp(time.Now())
@@ -151,10 +150,5 @@ func (e *RoundReportLogExporter) Close(ctx context.Context) error {
 	if e.cancel != nil {
 		e.cancel()
 	}
-	select {
-	case <-e.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return nil
 }

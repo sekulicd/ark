@@ -33,13 +33,13 @@ import (
 
 type service struct {
 	// services
-	wallet      ports.WalletService
-	signer      ports.SignerService
-	repoManager ports.RepoManager
-	builder     ports.TxBuilder
-	scanner     ports.BlockchainScanner
-	cache       ports.LiveStore
-	sweeper     *sweeper
+	wallet         ports.WalletService
+	signer         ports.SignerService
+	repoManager    ports.RepoManager
+	builder        ports.TxBuilder
+	scanner        ports.BlockchainScanner
+	cache          ports.LiveStore
+	sweeper        *sweeper
 	roundReportSvc RoundReportService
 
 	// config
@@ -141,7 +141,7 @@ func NewService(
 
 	roundReportSvc := reportSvc
 	if roundReportSvc == nil {
-		roundReportSvc = roundReportSvcOff{}
+		roundReportSvc = roundReportUnimplemented{}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

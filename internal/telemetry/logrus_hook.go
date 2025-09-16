@@ -3,7 +3,6 @@ package telemetry
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -12,14 +11,10 @@ import (
 )
 
 type OTelHook struct {
-	logger log.Logger
 }
 
 func NewOTelHook() *OTelHook {
-	lp := global.GetLoggerProvider()
-	return &OTelHook{
-		logger: lp.Logger("arkd"),
-	}
+	return &OTelHook{}
 }
 
 func (h *OTelHook) Levels() []logrus.Level {
@@ -48,8 +43,6 @@ func mapLevel(l logrus.Level) log.Severity {
 }
 
 func (h *OTelHook) Fire(e *logrus.Entry) error {
-	var pcs [1]uintptr
-	runtime.Callers(6, pcs[:])
 	rec := log.Record{}
 	rec.SetTimestamp(e.Time)
 	rec.SetSeverity(mapLevel(e.Level))
@@ -68,8 +61,13 @@ func (h *OTelHook) Fire(e *logrus.Entry) error {
 
 	// observed ts (optional)
 	rec.SetObservedTimestamp(time.Now())
+	logger := global.GetLoggerProvider().Logger("arkd")
+	ctx := e.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	logger.Emit(ctx, rec)
 
-	h.logger.Emit(context.Background(), rec)
 	return nil
 }
 

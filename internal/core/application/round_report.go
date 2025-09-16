@@ -109,9 +109,9 @@ func (r *roundReportSvc) RoundEnded(commitmentTxID string, totalInputs, totalOut
 	rep.Metrics.CPU = cpu.Seconds()
 	rep.Metrics.CoreEq = core
 	rep.Metrics.UtilizedPct = util
-	rep.Metrics.MemAllocDelta = float64(int64(m1.allocLive) - int64(s.m0.allocLive)) / (1024 * 1024)
-	rep.Metrics.MemSysDelta = float64(int64(m1.sys) - int64(s.m0.sys)) / (1024 * 1024)
-	rep.Metrics.MemTotalAllocDelta = float64(int64(m1.totalAlloc) - int64(s.m0.totalAlloc)) / (1024 * 1024)
+	rep.Metrics.MemAllocDelta = float64(int64(m1.allocLive)-int64(s.m0.allocLive)) / (1024 * 1024)
+	rep.Metrics.MemSysDelta = float64(int64(m1.sys)-int64(s.m0.sys)) / (1024 * 1024)
+	rep.Metrics.MemTotalAllocDelta = float64(int64(m1.totalAlloc)-int64(s.m0.totalAlloc)) / (1024 * 1024)
 	if m1.numGC >= s.m0.numGC {
 		rep.Metrics.GCDelta = m1.numGC - s.m0.numGC
 	}
@@ -179,9 +179,9 @@ func (r *roundReportSvc) OpEnded(op string) {
 			CPU:                cpu.Seconds(),
 			CoreEq:             core,
 			UtilizedPct:        util,
-			MemAllocDelta:      float64(int64(m1.allocLive) - int64(s.m0.allocLive)) / (1024 * 1024),
-			MemSysDelta:        float64(int64(m1.sys) - int64(s.m0.sys)) / (1024 * 1024),
-			MemTotalAllocDelta: float64(int64(m1.totalAlloc) - int64(s.m0.totalAlloc)) / (1024 * 1024),
+			MemAllocDelta:      float64(int64(m1.allocLive)-int64(s.m0.allocLive)) / (1024 * 1024),
+			MemSysDelta:        float64(int64(m1.sys)-int64(s.m0.sys)) / (1024 * 1024),
+			MemTotalAllocDelta: float64(int64(m1.totalAlloc)-int64(s.m0.totalAlloc)) / (1024 * 1024),
 			GCDelta:            deltaGC(m1.numGC, s.m0.numGC),
 		}
 	}
@@ -216,14 +216,14 @@ type RoundStats struct {
 }
 
 type RoundMetrics struct {
-	Latency             float64 // seconds
-	CPU                 float64 // seconds
-	CoreEq              float64 // equivalent CPU cores used (CPU time / wall-clock time)
-	UtilizedPct         float64 // CPU utilization percentage across all logical cores
-	MemAllocDelta       float64 // MB
-	MemSysDelta         float64 // MB
-	MemTotalAllocDelta  float64 // MB
-	GCDelta             uint32
+	Latency            float64 // seconds
+	CPU                float64 // seconds
+	CoreEq             float64 // equivalent CPU cores used (CPU time / wall-clock time)
+	UtilizedPct        float64 // CPU utilization percentage across all logical cores
+	MemAllocDelta      float64 // MB
+	MemSysDelta        float64 // MB
+	MemTotalAllocDelta float64 // MB
+	GCDelta            uint32
 }
 
 // Example metrics calculation:
@@ -237,14 +237,14 @@ type RoundMetrics struct {
 type StageMetric struct{ Latency float64 } // seconds
 
 type OpMetric struct {
-	Latency         float64 // seconds
-	CPU             float64 // seconds
-	CoreEq          float64
-	UtilizedPct     float64
-	MemAllocDelta   float64 // MB
-	MemSysDelta     float64 // MB
+	Latency            float64 // seconds
+	CPU                float64 // seconds
+	CoreEq             float64
+	UtilizedPct        float64
+	MemAllocDelta      float64 // MB
+	MemSysDelta        float64 // MB
 	MemTotalAllocDelta float64 // MB
-	GCDelta         uint32
+	GCDelta            uint32
 }
 
 type roundMem struct {
@@ -312,17 +312,17 @@ var closedRoundReportCh = func() chan *RoundReport {
 	return ch
 }()
 
-type roundReportSvcOff struct{}
+type roundReportUnimplemented struct{}
 
-func (roundReportSvcOff) RoundStarted(roundID string)  {}
-func (roundReportSvcOff) SetIntentsNum(numIntents int) {}
-func (roundReportSvcOff) RoundEnded(commitmentTxID string, totalInputs int, totalOutputs int, numTreeNodes int) {
+func (roundReportUnimplemented) RoundStarted(roundID string)  {}
+func (roundReportUnimplemented) SetIntentsNum(numIntents int) {}
+func (roundReportUnimplemented) RoundEnded(commitmentTxID string, totalInputs int, totalOutputs int, numTreeNodes int) {
 }
-func (roundReportSvcOff) StageStarted(stage string) {}
-func (roundReportSvcOff) StageEnded(stage string)   {}
-func (roundReportSvcOff) OpStarted(op string)       {}
-func (roundReportSvcOff) OpEnded(op string)         {}
-func (roundReportSvcOff) Report() <-chan *RoundReport {
+func (roundReportUnimplemented) StageStarted(stage string) {}
+func (roundReportUnimplemented) StageEnded(stage string)   {}
+func (roundReportUnimplemented) OpStarted(op string)       {}
+func (roundReportUnimplemented) OpEnded(op string)         {}
+func (roundReportUnimplemented) Report() <-chan *RoundReport {
 	return closedRoundReportCh
 }
-func (roundReportSvcOff) Close() {}
+func (roundReportUnimplemented) Close() {}
