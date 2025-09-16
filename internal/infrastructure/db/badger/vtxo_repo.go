@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/arkade-os/arkd/internal/core/domain"
@@ -97,6 +96,9 @@ func (r *vtxoRepository) GetVtxos(
 		if err != nil {
 			return nil, err
 		}
+		if vtxo == nil {
+			return nil, nil
+		}
 		vtxos = append(vtxos, *vtxo)
 	}
 	return vtxos, nil
@@ -174,6 +176,9 @@ func (r *vtxoRepository) UpdateVtxosExpiration(
 				vtxo, err := r.getVtxo(ctx, outpoint)
 				if err != nil {
 					return err
+				}
+				if vtxo == nil {
+					return nil
 				}
 				vtxo.ExpiresAt = expiresAt
 				if err := r.store.TxUpdate(tx, vtxo.String(), *vtxo); err != nil {
@@ -267,7 +272,7 @@ func (r *vtxoRepository) getVtxo(
 		err = r.store.Get(outpoint.String(), &vtxo)
 	}
 	if err != nil && err == badgerhold.ErrNotFound {
-		return nil, fmt.Errorf("vtxo %s:%d not found", outpoint.Txid, outpoint.VOut)
+		return nil, nil
 	}
 
 	return &vtxo, nil
@@ -278,10 +283,10 @@ func (r *vtxoRepository) settleVtxo(
 ) error {
 	vtxo, err := r.getVtxo(ctx, outpoint)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil
-		}
 		return err
+	}
+	if vtxo == nil {
+		return nil
 	}
 	if vtxo.Spent {
 		return nil
@@ -299,10 +304,10 @@ func (r *vtxoRepository) spendVtxo(
 ) error {
 	vtxo, err := r.getVtxo(ctx, outpoint)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil
-		}
 		return err
+	}
+	if vtxo == nil {
+		return nil
 	}
 	if vtxo.Spent {
 		return nil
@@ -320,10 +325,10 @@ func (r *vtxoRepository) unrollVtxo(
 ) (*domain.Vtxo, error) {
 	vtxo, err := r.getVtxo(ctx, outpoint)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return nil, nil
-		}
 		return nil, err
+	}
+	if vtxo == nil {
+		return nil, nil
 	}
 	if vtxo.Unrolled {
 		return nil, nil
@@ -357,6 +362,9 @@ func (r *vtxoRepository) sweepVtxo(ctx context.Context, outpoint domain.Outpoint
 	vtxo, err := r.getVtxo(ctx, outpoint)
 	if err != nil {
 		return err
+	}
+	if vtxo == nil {
+		return nil
 	}
 	if vtxo.Swept {
 		return nil
