@@ -107,17 +107,17 @@ type Config struct {
 	VtxoMaxAmount             int64
 	VtxoMinAmount             int64
 
-	repo      ports.RepoManager
-	svc       application.Service
-	adminSvc  application.AdminService
-	wallet    ports.WalletService
-	signer    ports.SignerService
-	txBuilder ports.TxBuilder
-	scanner   ports.BlockchainScanner
-	scheduler ports.SchedulerService
-	unlocker  ports.Unlocker
-	liveStore ports.LiveStore
-	network   *arklib.Network
+	repo           ports.RepoManager
+	svc            application.Service
+	adminSvc       application.AdminService
+	wallet         ports.WalletService
+	signer         ports.SignerService
+	txBuilder      ports.TxBuilder
+	scanner        ports.BlockchainScanner
+	scheduler      ports.SchedulerService
+	unlocker       ports.Unlocker
+	liveStore      ports.LiveStore
+	network        *arklib.Network
 	roundReportSvc application.RoundReportService
 }
 

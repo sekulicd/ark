@@ -83,7 +83,10 @@ func (r *roundReportSvc) SetIntentsNum(numIntents int) {
 	r.mu.Unlock()
 }
 
-func (r *roundReportSvc) RoundEnded(commitmentTxID string, totalInputs, totalOutputs, numTreeNodes int) {
+func (r *roundReportSvc) RoundEnded(
+	commitmentTxID string,
+	totalInputs, totalOutputs, numTreeNodes int,
+) {
 	r.mu.Lock()
 	if r.rep == nil {
 		r.mu.Unlock()
@@ -111,7 +114,9 @@ func (r *roundReportSvc) RoundEnded(commitmentTxID string, totalInputs, totalOut
 	rep.Metrics.UtilizedPct = util
 	rep.Metrics.MemAllocDelta = float64(int64(m1.allocLive)-int64(s.m0.allocLive)) / (1024 * 1024)
 	rep.Metrics.MemSysDelta = float64(int64(m1.sys)-int64(s.m0.sys)) / (1024 * 1024)
-	rep.Metrics.MemTotalAllocDelta = float64(int64(m1.totalAlloc)-int64(s.m0.totalAlloc)) / (1024 * 1024)
+	rep.Metrics.MemTotalAllocDelta = float64(
+		int64(m1.totalAlloc)-int64(s.m0.totalAlloc),
+	) / (1024 * 1024)
 	if m1.numGC >= s.m0.numGC {
 		rep.Metrics.GCDelta = m1.numGC - s.m0.numGC
 	}
@@ -175,14 +180,16 @@ func (r *roundReportSvc) OpEnded(op string) {
 	r.mu.Lock()
 	if r.rep != nil {
 		r.rep.Ops[op] = OpMetric{
-			Latency:            lat.Seconds(),
-			CPU:                cpu.Seconds(),
-			CoreEq:             core,
-			UtilizedPct:        util,
-			MemAllocDelta:      float64(int64(m1.allocLive)-int64(s.m0.allocLive)) / (1024 * 1024),
-			MemSysDelta:        float64(int64(m1.sys)-int64(s.m0.sys)) / (1024 * 1024),
-			MemTotalAllocDelta: float64(int64(m1.totalAlloc)-int64(s.m0.totalAlloc)) / (1024 * 1024),
-			GCDelta:            deltaGC(m1.numGC, s.m0.numGC),
+			Latency:       lat.Seconds(),
+			CPU:           cpu.Seconds(),
+			CoreEq:        core,
+			UtilizedPct:   util,
+			MemAllocDelta: float64(int64(m1.allocLive)-int64(s.m0.allocLive)) / (1024 * 1024),
+			MemSysDelta:   float64(int64(m1.sys)-int64(s.m0.sys)) / (1024 * 1024),
+			MemTotalAllocDelta: float64(
+				int64(m1.totalAlloc)-int64(s.m0.totalAlloc),
+			) / (1024 * 1024),
+			GCDelta: deltaGC(m1.numGC, s.m0.numGC),
 		}
 	}
 	r.mu.Unlock()
@@ -316,7 +323,13 @@ type roundReportUnimplemented struct{}
 
 func (roundReportUnimplemented) RoundStarted(roundID string)  {}
 func (roundReportUnimplemented) SetIntentsNum(numIntents int) {}
-func (roundReportUnimplemented) RoundEnded(commitmentTxID string, totalInputs int, totalOutputs int, numTreeNodes int) {
+
+func (roundReportUnimplemented) RoundEnded(
+	commitmentTxID string,
+	totalInputs int,
+	totalOutputs int,
+	numTreeNodes int,
+) {
 }
 func (roundReportUnimplemented) StageStarted(stage string) {}
 func (roundReportUnimplemented) StageEnded(stage string)   {}

@@ -3,10 +3,11 @@ package telemetry
 import (
 	"context"
 	"encoding/json"
+	"time"
+
 	"github.com/arkade-os/arkd/internal/core/application"
 	otelLog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
-	"time"
 )
 
 type RoundReportLogExporter struct {
@@ -14,7 +15,10 @@ type RoundReportLogExporter struct {
 	logger otelLog.Logger
 }
 
-func newRoundReportLogExporter(ctx context.Context, svc application.RoundReportService) (*RoundReportLogExporter, error) {
+func newRoundReportLogExporter(
+	ctx context.Context,
+	svc application.RoundReportService,
+) (*RoundReportLogExporter, error) {
 	lp := global.GetLoggerProvider()
 	logger := lp.Logger("ark.round")
 
