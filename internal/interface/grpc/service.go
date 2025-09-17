@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/arkade-os/arkd/internal/telemetry"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	interfaces "github.com/arkade-os/arkd/internal/interface"
 	"github.com/arkade-os/arkd/internal/interface/grpc/handlers"
 	"github.com/arkade-os/arkd/internal/interface/grpc/interceptors"
+	"github.com/arkade-os/arkd/internal/telemetry"
 	"github.com/arkade-os/arkd/pkg/kvdb"
 	"github.com/arkade-os/arkd/pkg/macaroons"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
@@ -172,7 +172,12 @@ func (s *service) newServer(tlsConfig *tls.Config, withAppSvc bool) error {
 			return err
 		}
 
-		otelShutdown, err := telemetry.InitOtelSDK(ctx, s.appConfig.OtelCollectorEndpoint, pushInteval, rrsc)
+		otelShutdown, err := telemetry.InitOtelSDK(
+			ctx,
+			s.appConfig.OtelCollectorEndpoint,
+			pushInteval,
+			rrsc,
+		)
 		if err != nil {
 			return err
 		}

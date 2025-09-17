@@ -2,13 +2,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/arkade-os/arkd/internal/telemetry"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/arkade-os/arkd/internal/config"
 	grpcservice "github.com/arkade-os/arkd/internal/interface/grpc"
+	"github.com/arkade-os/arkd/internal/telemetry"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )

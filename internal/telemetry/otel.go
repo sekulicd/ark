@@ -50,7 +50,10 @@ var arkRuntimeMetrics = []string{
 }
 
 func InitOtelSDK(
-	ctx context.Context, otelCollectorUrl string, pushInterval time.Duration, rrsvc application.RoundReportService,
+	ctx context.Context,
+	otelCollectorUrl string,
+	pushInterval time.Duration,
+	rrsvc application.RoundReportService,
 ) (func(context.Context) error, error) {
 	// TODO: support secure connection in the future
 	otelCollectorUrl = strings.TrimSuffix(otelCollectorUrl, "/")
