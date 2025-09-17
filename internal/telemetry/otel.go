@@ -2,11 +2,12 @@ package telemetry
 
 import (
 	"context"
-	"go.opentelemetry.io/otel/propagation"
 	"runtime/metrics"
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/arkade-os/arkd/internal/core/application"
 
@@ -124,7 +125,9 @@ func InitOtelSDK(
 
 	shutdown := func(ctx context.Context) error {
 		if rrExporter != nil {
-			rrExporter.Close(ctx)
+			if err := rrExporter.Close(ctx); err != nil {
+				return err
+			}
 		}
 		err3 := lp.Shutdown(ctx)
 		err1 := tp.Shutdown(ctx)
