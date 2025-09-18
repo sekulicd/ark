@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	ConfirmationStage          = "confirmation_stage"
-	TreeSigningStage           = "tree_signing_stage"
-	TreeNoncesAggregationStage = "tree_nonces_aggregation_stage"
-	ForfeitsStage              = "forfeits_stage"
+	ConfirmationStage         = "confirmation_stage"
+	TreeNoncesCollectionStage = "tree_nonces_collection_stage"
+	TreeSigsCollectionStage   = "tree_signaturea_collection_stage"
+	ForfeitTxsCollectionStage = "forfeit_txs_collection_stage"
 
 	BuildCommitmentTxOp          = "build_commitment_tx_op"
 	GetNoncesOperatorOp          = "get_nonces_op"
